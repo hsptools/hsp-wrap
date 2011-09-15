@@ -8,7 +8,7 @@
 
 
 // Number of cores/threads to utilize
-#define NCORES  (12)
+#define NCORES  (8)
 
 
 // Size of the I/O buffers
@@ -175,6 +175,7 @@ typedef struct st_slaveinfo {
   pthread_cond_t   resultb_nfull;   // Condition for not full
   pthread_cond_t   resultb_nempty;  // Condition for not empty
   pthread_mutex_t  time_lock;       // Lock for the cumulative timing stats
+  pthread_mutex_t  fork_lock;       // Lock for experimenting with fork
   float            t_i;             // Real input time
   float            t_o;             // Real output time
   float            t_ic;            // Input decompression time

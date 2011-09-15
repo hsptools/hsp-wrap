@@ -122,7 +122,7 @@ static void Report_Timings(int rank,
 	   v[7],(v[7]/(MasterInfo.nslaves*NCORES)));
     Vprint(SEV_NRML,"Uncompressed output:       %.3f  (per thread: %.3f).\n",
 	   v[8],(v[8]/(MasterInfo.nslaves*NCORES)));
-    Vprint(SEV_NRML,"Compresssed output:        %.3f  (per thread: %.3f).\n\n",
+    Vprint(SEV_NRML,"Compressed output:         %.3f  (per thread: %.3f).\n\n",
 	   v[9],(v[9]/(MasterInfo.nslaves*NCORES)));
     fflush(stderr);
     fflush(stdout);
@@ -835,7 +835,12 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   // Build a name for the exe
   sprintf(exe_name,"./%s",args.exe_base);
 
+  
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
   if( (pid=fork()) > 0 ) {
+    // Sleep some arbitrary amount of time and pray the child execs
+    sleep(4);
+    pthread_mutex_unlock(&(SlaveInfo.fork_lock));
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
@@ -1636,6 +1641,9 @@ static void Init_Slave()
 
   // Create result buffer (only for ranks responsible)
   CreateResultBuffer();
+
+  // Initialize experimental fork lock 
+  pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL);
 }
 
 
