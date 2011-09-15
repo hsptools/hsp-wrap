@@ -145,7 +145,7 @@ wrap: wrap.o Makefile
 
 # Maintenance
 clean:
-	rm -f *.o mcw sortfasta SHMclean zextract wrap xmlparse fastalens fastadist compressmol2 splitmol2 splitfasta
+	rm -f *.o mcw sortfasta SHMclean zextract wrap xmlparse fastalens fastadist compressfasta compressmol2 splitmol2 splitfasta
 
 strip: clean
 	rm -f *~ \#*
