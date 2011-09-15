@@ -28,7 +28,7 @@ papiwrap.o: papiwrap.c papiwrap.h Makefile
 	${cc} -Wall -O2 -c -o papiwrap.o papiwrap.c -lm -lpapi
 
 clean:
-	rm -f *.o test
+	rm -f *.o test demo papi_sum
 
 strip: clean
 	rm -f *~
