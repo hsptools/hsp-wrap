@@ -1,0 +1,39 @@
+				 MCW / BLAST
+
+WHAT IS MCW / BLAST?
+
+  BLAST is a tool developed by the National Center for Biotecnology
+  Information.  While a useful tool, it doesn't scale across a cluster or
+  super-computer on its own.  Hence the creation of MCW.  MCW is essentially
+  a scheduler designed to distribute queries across multiple instances of
+  BLAST.  MCW uses MPI to communicate across between nodes.
+
+WHAT IS INCLUDED?
+
+  This package contains a beta distribution of MCW, BLAST, and a library,
+  stdiowrap.
+
+WHAT IS REQUIRED?
+
+  All dependencies for the ncbi toolkit must be met.  In addition, one needs
+  MPI and the MPI development tools (mpicc and mpic++ compiler wrappers).  The
+  makefiles included in this distribution assumes an installed copy of
+  GNU Make and the GNU compiler collection.
+
+HOW TO USE IT?
+
+  Read the `INSTALL' file shipped with this distribution for building
+  instructions.  Once you have properly compiled mcw and blastall, you may
+  reference the examples in the examples/ directory for possible mcw
+  configurations, and examples of possible job scripts to run on your system.
+
+WHERE TO OBTAIN HELP?
+
+  For help with the BLAST tool specifically, you should contact:
+    toolbox@ncbi.nlm.nih.gov
+  
+  For help with this distribution; including stdiowrap, mcw, the provided
+  makefiles, examples, and documentation; please contact the current
+  maintainer, Paul Giblock, at:
+    pgiblock@utk.edu
+

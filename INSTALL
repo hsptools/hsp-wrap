@@ -1,0 +1,18 @@
+                           MCW / BLAST Installation
+
+In order to "INSTALL" mcw and blast, one should only need to run:
+
+  make install
+
+from the root of this distribution.  This will build mcw, blastall, and all
+required tools and libraries.  The compiled binaries are available in:
+
+  target
+
+Note that there are currently no "configure" scripts and one needs to change
+several files to modify the configuration.
+
+CONFIGURING:
+
+  ...
+
