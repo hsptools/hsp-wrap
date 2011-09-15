@@ -2,19 +2,22 @@
 
 
 # optimized build (default)
-CC=     cc
+#CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
+CC= mpicc
 OPTS=   
 CFLAGS= -O3 -Wall
 LIBS=   -lm -lz -lexpat
 
 # debug build
-DBG_CC=     cc
+#DBG_CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
+DBG_CC= mpicc
 DBG_OPTS=   
 DBG_CFLAGS= -g -Wall
 DBG_LIBS=   -lm -lz -lexpat
 
 # profile options
-PROF_CC=     cc
+#PROF_CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
+PROF_CC= mpicc
 PROF_OPTS=
 PROF_CFLAGS= -O3 -Wall
 PROF_LIBS=   -lm -lz -lexpat $(FPMPI_LDFLAGS)
@@ -139,7 +142,6 @@ wrap: wrap.o Makefile
 
 
 ############################################################
-
 
 # Maintenance
 clean:

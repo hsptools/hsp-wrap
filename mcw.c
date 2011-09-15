@@ -682,6 +682,74 @@ static char **Worker_BuildArgv(int rank, int procs, int wid)
   return argv;
 }
 
+/*
+static char **Worker_BuildArgvInPlace(char **argv, char *buf,  int rank, int procs, int wid)
+{
+  char  *b,*m,*w,*saveptr=NULL;
+  int    na,node,nodes,loadstride;
+
+
+  // These will be needed later
+  node       = rank;
+  nodes      = procs;
+  loadstride = nodes/args.ndbs;
+  b          = buf;
+
+
+  // Put program name at the start of argv list
+  buf = strcpy(buf, args.exe_base)
+  argv[0] = buf;
+  na = 1;
+
+
+  // Now add the args from the env var mode / line
+  m = strdup(args.mode);
+  w = strtok_r(m, " ", &saveptr);
+  while( w ) {
+    // Make room in array for another arg
+    if( !(argv=realloc(argv,(na+1)*sizeof(char*))) ) {
+      Vprint(SEV_ERROR, "Slave %d Worker %d Failed to grow child's argv list.\n",rank,wid);
+      Abort(1);
+    }
+    // Put arg in list
+    if( !strcmp(w,":DB:") ) {
+      // DB macro
+      sprintf(buf,"%s/%s%d/%s",
+	      args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
+      argv[na] = strdup(buf);
+      na++;
+    } else if( !strcmp(w,":IN:") ) {
+      // Input macro
+      sprintf(buf,":STDIN%d",wid*2);
+      argv[na] = strdup(buf);
+      na++;
+    } else if( !strcmp(w,":OUT:") ) {
+      // Output macro
+      sprintf(buf,":STDOUT%d",wid*2+1);
+      argv[na] = strdup(buf);
+      na++;
+    } else { 
+      // Just a regular word
+      argv[na] = strdup(w);
+      na++;
+    }
+    // Advance to next arg in list
+    w = strtok_r(NULL, " ", &saveptr);
+  }
+  free(m);
+
+
+  // Add a null pointer to the end
+  if( !(argv=realloc(argv,(na+1)*sizeof(char*))) ) {
+    Vprint(SEV_ERROR, "Slave %d Worker %d Failed to grow child's argv list.\n",rank,wid);
+    Abort(1);
+  }
+  argv[na] = NULL;
+
+  // Return the created args list
+  return argv;
+}
+*/
 
 static void Worker_Child_MapFDs(int rank, int wid)
 {
@@ -728,6 +796,9 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   int   pid,node,nodes,loadstride;
   float io_time=0.0f;
 
+  char s_argbuf[4096];
+  char *s_argv[32];
+
 
   // These will be needed later
   node       = rank;
@@ -735,7 +806,19 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   loadstride = nodes/args.ndbs;
 
   // Parse the line to build argv[][] for child
-  argv = Worker_BuildArgv(rank,procs,wid);  
+  argv = Worker_BuildArgv(rank,procs,wid);
+  char *argi = s_argbuf;
+  int i;
+  for (i=0; argv[i] && i<32; ++i) {
+    char* arg = argv[i];
+    int   len = strlen(arg);
+    strcpy(argi, arg);
+    s_argv[i] = argi;
+    argi += len + 1;
+  }
+  s_argv[i] = NULL;
+  // Free the now unneeded argv array
+  Worker_FreeArgv(argv);
 
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
@@ -755,15 +838,13 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   if( (pid=fork()) > 0 ) {
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
-    // Free the now unneeded argv array
-    Worker_FreeArgv(argv);
     // Wait for child to finish; handle its IO
     io_time = Worker_ChildIO(rank,pid,wid,rndx);
   } else if( !pid ) {
     // This is the Child process
-    Worker_Child_MapFDs(rank,wid);
+    //PG Worker_Child_MapFDs(rank,wid);
     // Run the DB search
-    if( execv(exe_name,argv) < 0 ) {
+    if( execv(exe_name,s_argv) < 0 ) {
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.  Terminating.\n");
       exit(1);
     }
@@ -835,7 +916,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     } while( ret != Z_STREAM_END );
 
     // clean up
-    inflateEnd(&strm);
+    //PG:inflateEnd(&strm);
 
     // If the stream ended before using all the data
     // in the block, return error.
@@ -964,7 +1045,7 @@ static void* Worker(void *arg)
       file_sizes->fs[r].size = 0;
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, r);
       // The producer of the work unit malloced this, so we need to free it.
-      free(workunit->data);
+      //PG:free(workunit->data);
       Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
     default:

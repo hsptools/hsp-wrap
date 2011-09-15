@@ -1,15 +1,14 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdint.h>
 #include <zlib.h>
 
 
@@ -46,12 +45,12 @@ static int seqcmp(char *s, char *m)
       return 0;
     } else {
       if( (*s) < (*m) ) {
-	return -1;
+        return -1;
       } else if( (*s) > (*m) ) {
-	return 1;
+        return 1;
       } else {
-	s++;
-	m++;
+        s++;
+        m++;
       }
     }
   }
@@ -78,10 +77,10 @@ static int Sequence_Length(char *seq)
     if( p >= nfo.equery ) {
       // End of all sequences found
       if( p > seq+1 ) {
-	// Some bytes were found before end..
-	return nfo.equery-seq;
+      // Some bytes were found before end..
+        return nfo.equery-seq;
       } else {
-	return 0;
+        return 0;
       }
     }
   } while( seqcmp(p,">") );
@@ -131,7 +130,7 @@ static void Init_Sequences(char *fn)
   if( nfo.queries == MAP_FAILED ) {
     f = errno;
     fprintf(stderr,"Could not mmap() opened query file.  Terminating. (errno:%d -> %s)\n",
-	    f,strerror(f));
+            f,strerror(f));
     exit(1);
   }
 
@@ -199,15 +198,15 @@ static void ZCompressWrite(void *source, int sz, FILE *dest, int level)
       strm.next_out  = out;
       rv = deflate(&strm, flush);
       if( rv == Z_STREAM_ERROR ) {
-	fprintf(stderr,"Failed to compress output block.  Terminating.\n");
-	exit(1);
+        fprintf(stderr,"Failed to compress output block.  Terminating.\n");
+        exit(1);
       }
       // Write compressed data to destination
       ndata = ZCHUNK - strm.avail_out;
       if( (fwrite(out, 1, ndata, dest) != ndata) || ferror(dest) ) {
-	deflateEnd(&strm);
-	fprintf(stderr,"Failed to compress output block.  Terminating.\n");
-	exit(1);
+        deflateEnd(&strm);
+        fprintf(stderr,"Failed to compress output block.  Terminating.\n");
+        exit(1);
       }
       len += ndata;
     } while( strm.avail_out == 0 );
@@ -248,6 +247,19 @@ static void ZCompressWrite(void *source, int sz, FILE *dest, int level)
 }
 
 
+void print_usage(FILE *f)
+{
+  fprintf(f, "usage: compressfasta <fasta_file> <block_size> <output_file>\n");
+}
+
+
+void print_help()
+{
+  print_usage(stdout);
+  printf("LALALA\n");
+}
+
+
 int main(int argc, char **argv)
 {
   char   *seq;
@@ -260,14 +272,18 @@ int main(int argc, char **argv)
   memset(&nfo,0,sizeof(info_t));
   
   // Check command line args
+  if( argc == 2 && strcmp(argv[1], "--help") == 0) {
+    print_help();
+    exit(0);
+  }
   if( argc != 4 ) {
-    fprintf(stderr,"usage:\n\tcompressfasta <fasta_file> <block_size> <output_file>\n");
+    print_usage(stderr);
     exit(1);
   }
 
   // Get split count
   if( sscanf(argv[2],"%d",&bsz) != 1 ) {
-    fprintf(stderr,"usage:\n\tcompressfasta <fasta_file> <block_size> <output_file>\n");
+    fprintf(stderr,"compressfasta: %s: invalid block size parameter\n",argv[2]);
     exit(1);
   }
   
@@ -287,12 +303,12 @@ int main(int argc, char **argv)
     for(sz=0; (sz < bsz) && (seq=Get_Sequence()); sz+=nfo.sequencels[nfo.nsequences-1]) {
       nfo.nsequences++;
       if( !(nfo.sequences = realloc(nfo.sequences,nfo.nsequences*sizeof(char*))) ) {
-	fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
-	exit(1);
+        fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
+        exit(1);
       }
       if( !(nfo.sequencels = realloc(nfo.sequencels,nfo.nsequences*sizeof(size_t))) ) {
-	fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
-	exit(1);
+        fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
+        exit(1);
       }
       nfo.sequences[nfo.nsequences-1]  = seq;
       nfo.sequencels[nfo.nsequences-1] = Sequence_Length(seq);
