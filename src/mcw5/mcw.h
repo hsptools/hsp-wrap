@@ -49,6 +49,7 @@ typedef struct st_args {
   char *queryf;          // Query file
   char *dup2;            // FD mappings for child
   long  time_limit;      // Runtime limit
+  char *job_name;        // User-specified name for the run
 } args_t;
 
 

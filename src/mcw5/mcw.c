@@ -806,6 +806,8 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   loadstride = nodes/args.ndbs;
 
   // Parse the line to build argv[][] for child
+  // PG: We use the stack so we avoid touching pages shared with MPI between
+  //     fork and exec below. TODO: Could rework BuildArgv function
   argv = Worker_BuildArgv(rank,procs,wid);
   char *argi = s_argbuf;
   int i;
@@ -836,11 +838,9 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   sprintf(exe_name,"./%s",args.exe_base);
 
   
+  // Lock until child process signals us with SIGUSR1
   pthread_mutex_lock(&(SlaveInfo.fork_lock));
   if( (pid=fork()) > 0 ) {
-    // Sleep some arbitrary amount of time and pray the child execs
-    //sleep(4);
-    //pthread_mutex_unlock(&(SlaveInfo.fork_lock));
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
@@ -849,7 +849,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
     // Run the DB search
-    // kill(getppid(), SIGUSR1);
     if( execv(exe_name,s_argv) < 0 ) {
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.  Terminating.\n");
       exit(1);
@@ -922,7 +921,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     } while( ret != Z_STREAM_END );
 
     // clean up
-    //PG:inflateEnd(&strm);
+    inflateEnd(&strm);
 
     // If the stream ended before using all the data
     // in the block, return error.
@@ -1051,7 +1050,7 @@ static void* Worker(void *arg)
       file_sizes->fs[r].size = 0;
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, r);
       // The producer of the work unit malloced this, so we need to free it.
-      //PG:free(workunit->data);
+      free(workunit->data);
       Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
     default:
@@ -2138,22 +2137,31 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
     Vprint(SEV_NRML,"Setting up output directories.\n\n");
   }
   if( *rank ) {
-    char fn[1024];
+    char fn[1024], *jn;
     
     // This slave has it's own output directory.
     // I don't want it touching anything that is shared in any way
     // more than it has to.  So, I will create the dir for the slave
     // on startup; after which it can just stay there.
-    sprintf(fn,"slaves-%d",(*rank)/96);
-    if( mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) < 0 ) {
-      // Do I really care if the dir can't be made or already exists?
-      // The next syscall call will fail anyways...
+
+    jn = getenv("MCW_JOB_NAME");
+    if( jn ) {
+      snprintf(fn, 1024, "job-%s", jn);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+
+      snprintf(fn, 1024, "job-%s/slaves-%d", jn, (*rank)/100);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+
+      snprintf(fn, 1024, "job-%s/slaves-%d/slave-%d", jn, (*rank)/100, *rank);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+    } else {
+      snprintf(fn, 1024, "slaves-%d", (*rank)/100);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+
+      snprintf(fn, 1024, "slaves-%d/slave-%d", (*rank)/100, *rank);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
     }
-    sprintf(fn,"slaves-%d/slave-%d",(*rank)/96,*rank);
-    if( mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH) < 0 ) {
-      // Do I really care if the dir can't be made or already exists?
-      // The next syscall will fail anyways...
-    }
+
     // The needed directories should now exist.
     // Make our directory the current working dir.
     if( chdir(fn) < 0 ) {
@@ -2264,7 +2272,6 @@ static void Parse_Environment(int procs)
     UsageError();
   }
   args.dup2 = strdup(p);
-
 }
 
 
@@ -2287,7 +2294,6 @@ static void sighndler(int arg)
 static void sigusr_forkunlock(int arg)
 {
   pthread_mutex_unlock(&(SlaveInfo.fork_lock));
-  Vprint(SEV_DEBUG, "JOY JOY JOY! Got signal\n");
 }
 
 static void exitfunc()
