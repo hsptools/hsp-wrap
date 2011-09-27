@@ -152,8 +152,8 @@ static int fill_WFILE_data_SHM(WFILE *wf)
       // Attach the shared memory segment
       wf->data = shmat(file_sizes->fs[i].fd, NULL, 0);
       if( wf->data == ((void*)-1) ) {
-	fprintf(stderr,"stdiowrap: Failed to attach SHM.\n");
-	exit(1);
+        fprintf(stderr,"stdiowrap: Failed to attach SHM.\n");
+	      exit(1);
       }
       wf->size  = file_sizes->fs[i].size;
       wf->tsize = file_sizes->fs[i].shmsize;

@@ -839,8 +839,8 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   pthread_mutex_lock(&(SlaveInfo.fork_lock));
   if( (pid=fork()) > 0 ) {
     // Sleep some arbitrary amount of time and pray the child execs
-    sleep(4);
-    pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+    //sleep(4);
+    //pthread_mutex_unlock(&(SlaveInfo.fork_lock));
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
@@ -849,6 +849,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
     // Run the DB search
+    // kill(getppid(), SIGUSR1);
     if( execv(exe_name,s_argv) < 0 ) {
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.  Terminating.\n");
       exit(1);
@@ -1092,8 +1093,9 @@ void Start_Workers()
 
   // Start worker threads
   for(i=0; i<NCORES; i++) {
-    if( pthread_create(&(SlaveInfo.workers[i]), &attr, Worker, (void*)((long)i)) ) { 
-      Vprint(SEV_ERROR,"Slave failed to start worker thread. Terminating.\n");
+    int err = pthread_create(&(SlaveInfo.workers[i]), &attr, Worker, (void*)((long)i));
+    if (err) {
+      Vprint(SEV_ERROR,"Slave failed to start worker thread. %s. Terminating.\n", strerror(err));
       Abort(1);
     }
   }
@@ -2282,6 +2284,12 @@ static void sighndler(int arg)
   kill(getpid(), SIGKILL);
 }
 
+static void sigusr_forkunlock(int arg)
+{
+  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  Vprint(SEV_DEBUG, "JOY JOY JOY! Got signal\n");
+}
+
 static void exitfunc()
 {
   // Be verbose
@@ -2329,6 +2337,7 @@ int main(int argc, char **argv)
   // all SHMs can be removed, even in case of error.
   atexit(exitfunc);
   signal(SIGTERM, sighndler);
+  signal(SIGUSR1, sigusr_forkunlock);
   signal(SIGPIPE, SIG_IGN);
 
   // Initialize basic MPI subsystem

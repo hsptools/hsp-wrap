@@ -8,12 +8,12 @@
 
 
 // Number of cores/threads to utilize
-#define NCORES  (8)
+#define NCORES  (4)
 
 
 // Size of the I/O buffers
-#define QUERYBUFF_SIZE      (1<<20)                            // 1   MiB
-#define RESULTBUFF_SIZE     (1<<27)                            // 128 MiB
+#define QUERYBUFF_SIZE      (1L<<20)                            // 1   MiB
+#define RESULTBUFF_SIZE     (1L<<27)                            // 128 MiB
 #define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*NCORES)
 #define RESULTBUFF_SHM_SIZE (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
 
