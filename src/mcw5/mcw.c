@@ -164,6 +164,39 @@ static void Report_Timings(int rank,
 
 
 ////////////////////////////////////////////////////////////////////////////////
+//                 Helpers for bad fork/free implementations                  //
+////////////////////////////////////////////////////////////////////////////////
+
+static int safe_inflateEnd(z_stream *strm)
+{
+  int ret;
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  ret = inflateEnd(strm);
+  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  return ret;
+}
+
+
+static void safe_free(void *p)
+{
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  free(p);
+  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+}
+  
+
+static void* safe_malloc(size_t sz)
+{
+  void *p;
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  p = malloc(sz);
+  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  return p;
+}
+  
+
+
+////////////////////////////////////////////////////////////////////////////////
 //                                 Exit Code                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -785,7 +818,7 @@ static void Worker_Child_MapFDs(int rank, int wid)
     // Advance to next mapping in list
     w = strtok_r(NULL, " ", &saveptr);
   }
-  free(m);
+  safe_free(m);
 }
 
 
@@ -808,6 +841,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   // Parse the line to build argv[][] for child
   // PG: We use the stack so we avoid touching pages shared with MPI between
   //     fork and exec below. TODO: Could rework BuildArgv function
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
   argv = Worker_BuildArgv(rank,procs,wid);
   char *argi = s_argbuf;
   int i;
@@ -821,6 +855,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
   s_argv[i] = NULL;
   // Free the now unneeded argv array
   Worker_FreeArgv(argv);
+  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
 
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
@@ -893,7 +928,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     bsz = cb->len;
     do {
       if( !(strm.avail_in=((bsz>=CHUNK)?(CHUNK):(bsz))) ) {
-	inflateEnd(&strm);
+	safe_inflateEnd(&strm);
 	return Z_DATA_ERROR;
       }
       memcpy(in, &(cb->data)+cb->len-bsz, strm.avail_in);
@@ -909,7 +944,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
 	case Z_NEED_DICT:
 	case Z_DATA_ERROR:
 	case Z_MEM_ERROR:
-	  inflateEnd(&strm);
+	  safe_inflateEnd(&strm);
 	case Z_STREAM_ERROR:
 	  return ret;
 	}
@@ -921,7 +956,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     } while( ret != Z_STREAM_END );
 
     // clean up
-    inflateEnd(&strm);
+    safe_inflateEnd(&strm);
 
     // If the stream ended before using all the data
     // in the block, return error.
@@ -1050,7 +1085,7 @@ static void* Worker(void *arg)
       file_sizes->fs[r].size = 0;
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, r);
       // The producer of the work unit malloced this, so we need to free it.
-      free(workunit->data);
+      safe_free(workunit->data);
       Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
     default:
@@ -1763,7 +1798,7 @@ static void Slave(int processes, int rank)
 	workunit = tscq_entry_new(si->wq);
 	workunit->type = WU_TYPE_SEQF;
 	workunit->len  = cb->len+sizeof(cb->len);
-	workunit->data = malloc(workunit->len);
+	workunit->data = safe_malloc(workunit->len);
 	if( !workunit->data ) {
 	  Vprint(SEV_ERROR,"Slave failed to allocate work unit data for worker. Terminating.\n");
 	  Abort(1);
