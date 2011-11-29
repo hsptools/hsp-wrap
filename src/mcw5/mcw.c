@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <mpi.h>
+#include <math.h>
 #include <signal.h>
 #include <zlib.h>
 
@@ -409,7 +410,7 @@ static void Master(int processes, int rank)
 {
   masterinfo_t *mi=&MasterInfo; // Just to shorten
   seq_data_t    sequence;
-  int           nseq,seqsz,blkseqs,index,i,fp;
+  int           nseq,seqsz,blkseqs,index,i,fp,max_req;
   double        pd,lpd;
   long          st;
 
@@ -423,6 +424,8 @@ static void Master(int processes, int rank)
   Vprint(SEV_NRML,"Slaves:   %d\t(processes)\n",mi->nslaves);
   Vprint(SEV_NRML,"Workers:  %d\t(threads)\n\n",mi->nslaves*NCORES);
   Init_Master(&mi);
+
+	max_req = ceil((float)mi->nqueries/(mi->nslaves*NCORES));
 
   // Wait for all the ranks to fully init
   MPI_Barrier(MPI_COMM_WORLD);
@@ -457,7 +460,12 @@ static void Master(int processes, int rank)
     switch( mi->slaves[index].request.type ) {
     case RQ_WU:
       // Slave wants a work unit; send it to him
-      blkseqs = mi->slaves[index].request.count;
+			// Limit number of work units to a fair amount
+			blkseqs = mi->slaves[index].request.count;
+			if (blkseqs > max_req) {
+				Vprint(SEV_NRML,"Master: Slave %d requested %d units, limiting to %d.", index, blkseqs, max_req);
+				//blkseqs = max_req;
+			}
       sequence = Get_SequenceBlocks(&seqsz,&blkseqs);
       mi->slaves[index].workunit.type = WU_TYPE_SEQS;
       mi->slaves[index].workunit.len  = seqsz;
@@ -928,7 +936,7 @@ static void GrowSeqData(int new_len)
 static void* Worker(void *arg)
 {
   int             wid = (int)((long)arg);
-  struct timeval  st,et;
+  struct timeval  st,et,tv;
   slaveinfo_t    *si=&SlaveInfo;
   request_t      *request;
   workunit_t     *workunit;
@@ -938,7 +946,6 @@ static void* Worker(void *arg)
   long            ib,idb;
   char            name[256];
 
-  
   // Find the in/out SHMs for this worker
   q = -1;
   sprintf(name,":STDIN%d",wid*2);
@@ -973,6 +980,9 @@ static void* Worker(void *arg)
     ib = idb = 0;
     gettimeofday(&st, NULL);
 
+    Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d Requesting at %d.%06d.\n",
+                 SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
+
     // Get a new request entry object
     Vprint(SEV_DEBUG,"Slave %d Worker %d getting request object.\n",SlaveInfo.rank,wid);
     request = tscq_entry_new(si->rq);
@@ -1006,12 +1016,17 @@ static void* Worker(void *arg)
       Vprint(SEV_DEBUG,"Slave %d Worker %d starting search.\n",SlaveInfo.rank,wid);
       // Inflate the zlib compressed block(s) into the SHM
       gettimeofday(&st, NULL);
+      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d inflating at %d.%06d.\n",
+                   SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
+
       if( zinf_memcpy((unsigned char*)file_sizes->fs[q].shm,(compressedb_t*)(workunit->data),(size_t)workunit->len,&dcsz) != Z_OK ) {
         Vprint(SEV_ERROR,"Slave %d Worker %d zlib inflate failed. Terminating.\n",SlaveInfo.rank,wid);
         si->worker_error = wid;
         return NULL;
       }
       gettimeofday(&et, NULL);
+      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
+                   SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
       t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
       ib  = workunit->len;
@@ -1021,7 +1036,10 @@ static void* Worker(void *arg)
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
-      Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
+      gettimeofday(&tv, NULL);
+      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d done with search at %d.%06d.\n",
+                   SlaveInfo.rank, wid, tv.tv_sec, tv.tv_usec);
+      //Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
     default:
       Vprint(SEV_ERROR,"Worker received unknown work unit type. Terminating.\n");
@@ -1033,6 +1051,7 @@ static void* Worker(void *arg)
     tscq_entry_free(si->wq,workunit);
 
     // Add time spent into node count
+    // TODO: Bottleneck... just accumulate per-worker then add into slave on end of entire job
     pthread_mutex_lock(&(SlaveInfo.time_lock));
     SlaveInfo.t_ic += t_ic;
     SlaveInfo.t_vi += t_vi;
@@ -1538,12 +1557,16 @@ static void Init_Slave()
 
 static void Slave(int processes, int rank)
 {
-  struct timeval  st,et;
+  struct timeval  st,et,tv;
   slaveinfo_t    *si=&SlaveInfo;
   compressedb_t  *cb;
   workunit_t     *workunit;
   request_t      *request;
   int             qd=0,i,sz;
+
+  gettimeofday(&tv, NULL);
+  Vprint(SEV_DEBUG,"[TIMING] Slave %d started at %d.%06d.\n",
+               SlaveInfo.rank, tv.tv_sec, tv.tv_usec);
   
   memset(si,0,sizeof(slaveinfo_t));
   si->nprocs = processes;
@@ -2037,16 +2060,19 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
       snprintf(fn, 1024, "job-%s", jn);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 
-      snprintf(fn, 1024, "job-%s/slaves-%d", jn, (*rank)/100);
+      snprintf(fn, 1024, "job-%s/%02d", jn, (*rank)/100);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 
-      snprintf(fn, 1024, "job-%s/slaves-%d/slave-%d", jn, (*rank)/100, *rank);
+      snprintf(fn, 1024, "job-%s/%02d/%d", jn, (*rank)/100, *rank);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
     } else {
-      snprintf(fn, 1024, "slaves-%d", (*rank)/100);
+      snprintf(fn, 1024, "mcw-out", jn);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 
-      snprintf(fn, 1024, "slaves-%d/slave-%d", (*rank)/100, *rank);
+      snprintf(fn, 1024, "mcw-out/%02d", (*rank)/100);
+      mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+
+      snprintf(fn, 1024, "mcw-out/%02d/%d", (*rank)/100, *rank);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
     }
 

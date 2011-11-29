@@ -8,7 +8,7 @@
 
 
 // Number of cores/threads to utilize
-#define NCORES  (4)
+#define NCORES  (12)
 
 
 // Size of the I/O buffers
