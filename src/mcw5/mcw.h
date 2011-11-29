@@ -20,6 +20,7 @@
 
 // Flag to use compression (zlib) on output data
 #define COMPRESSION 1
+#define COMPRESSION_IN 0
 
 
 // Verbosity (level of debugging prints)
@@ -126,7 +127,6 @@ typedef struct st_resultbuff {
 // Tag for send/recv requests
 #define TAG_REQUEST 2
 
-
 // Request type from slaves to master
 typedef struct st_request {
   int    type;      // Request type
@@ -151,6 +151,7 @@ typedef struct st_slave {
 typedef struct st_masterinfo {
   MPI_Request    *mpi_req;      // MPI request status for receiving WU requests
   slave_t        *slaves;       // Array of slave management structs
+	enum format_t  *qformat;      // Format of input file
   void           *qmap;         // Raw mmap() of input file
   compressedb_t **queries;      // Array of pointers input blocks
   int             nqueries;     // Total number of query sequences

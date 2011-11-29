@@ -14,6 +14,7 @@
 #include <time.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <mpi.h>
 #include <math.h>
@@ -306,8 +307,8 @@ static seq_data_t Get_SequenceBlocks(int *size, int *blocks)
     if( args.wum/2 ) {
       (*blocks) *= (args.wum/2);
       if( !f1 ) {
-	f1 = 1;
-	Vprint(SEV_NRML,"Master switching to smaller WUM: %d\n\n",(args.wum/2));
+				f1 = 1;
+				Vprint(SEV_NRML,"Master switching to smaller WUM: %d\n\n",(args.wum/2));
       }
     }
     if( !f1 ) {
@@ -339,6 +340,7 @@ static void Init_Queries(char *fn)
 {
   struct stat    statbf;
   compressedb_t *cb;
+	char          *cp;
   int            f;
   
 
@@ -359,10 +361,25 @@ static void Init_Queries(char *fn)
     Abort(1);
   }
 
+	// Check "magic numbers"
+	/*
+	if (statbf.st_size > 2) {
+		char *cdata = (char*)(MasterInfo.qmap);
+		if (cdata[0] == '>' && isprint(cdata[1])) {
+			MasterInfo.qformat = FASTA;
+		}
+		else {
+			MasterInfo.qformat = COMPRESSED;
+		}
+	}
+	*/
+
   // Build array of pointers to block structs from raw map
   MasterInfo.nqueries = 0;
   MasterInfo.queries  = NULL;
-  for(cb=(compressedb_t*)MasterInfo.qmap; cb<(compressedb_t*)(MasterInfo.qmap+statbf.st_size); cb=((void*)cb)+cb->len+sizeof(cb->len)) {
+
+#if COMPRESSION_IN	
+	for(cb = (compressedb_t*)MasterInfo.qmap; cb < (compressedb_t*)(MasterInfo.qmap+statbf.st_size); cb += cb->len+sizeof(cb->len)) {
     // Start of new compressed block
     MasterInfo.nqueries++;
     if( !(MasterInfo.queries=realloc(MasterInfo.queries,MasterInfo.nqueries*sizeof(compressedb_t*))) ) {
@@ -371,6 +388,10 @@ static void Init_Queries(char *fn)
     }
     MasterInfo.queries[MasterInfo.nqueries-1] = cb;
   }
+#else
+	for(cp = (char*)MasterInfo.qmap; cp < (char*)(MasterInfo.qmap+statbf.st_size); cb += cb->len+sizeof(cb->len)) {
+	}
+#endif
 
   // Compute a reasonable size for a query block
   Vprint(SEV_NRML,"Compressed input block count: %d\n\n",MasterInfo.nqueries);
