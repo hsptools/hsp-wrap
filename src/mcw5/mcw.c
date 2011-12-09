@@ -550,6 +550,27 @@ static void Master(int processes, int rank)
 }
 
 
+static void Master_Flush()
+{
+	/*
+  int i;
+  char d = MASTERCMD_EXIT;
+
+  MPI_Request req;
+  
+  // Supposedly the multi-thread support works for point-to-point
+  // Unsure if it works for Bcast, so loop for safety.
+  for(i=0; i<MasterInfo.nslaves; i++) {
+    MPI_Isend(&d, sizeof(char), MPI_BYTE, MasterInfo.slaves[i].rank,
+              TAG_MASTERCMD, MPI_COMM_WORLD, &req);
+  }
+	*/
+
+  // FIXME: Hack, arbitrary timeout
+  sleep(60);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 //                               Worker Code                                  //
 ////////////////////////////////////////////////////////////////////////////////
@@ -1555,9 +1576,96 @@ static void Init_Slave()
 }
 
 
+static void Slave_Exit()
+{
+  struct timeval  st,et;
+	int i;
+
+  // Tell the writer thread it is done and wait for it
+  Vprint(SEV_DEBUG,"Slave %d waiting for writer to finish.\n",SlaveInfo.rank);
+  SlaveInfo.done = 1;
+  pthread_mutex_lock(&(SlaveInfo.resultb_lock));
+  pthread_cond_signal(&(SlaveInfo.resultb_nempty));
+  pthread_mutex_unlock(&(SlaveInfo.resultb_lock));
+  pthread_join(resultbuff_thread,NULL);
+  
+  // !!av: Gating hack
+  i = SlaveInfo.nprocs / ConcurrentWriters;
+  if( SlaveInfo.nprocs%ConcurrentWriters ) {
+    i++;
+  }
+
+  gettimeofday(&st, NULL);
+  while( i-- ) {
+    if( !(i%SlaveInfo.rank) ) {
+      Write(Fd, Cbuff, Nc);
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+  gettimeofday(&et, NULL);
+  SlaveInfo.t_o  = ((et.tv_sec*1000000+et.tv_usec) -
+                   (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+}
+
+
+static void* Slave_Listener(void* arg)
+{
+
+	// FIXME: HACK, it is stupid to do this. We should just fix the messaging policy
+  long st;
+
+  // Record start time
+  st = time(NULL);
+
+  // Wait until our time limit is exceeded
+  while( (time(NULL)-st) <= args.time_limit ) {
+    sleep(1);
+  }
+
+  Vprint(SEV_ERROR,"Slave noticed time limit exceeded.  Flushing.\n\n");
+	Slave_Exit();
+
+	// END HACK
+
+  return NULL;
+
+	/*
+  char d;
+  while (1) {
+		Vprint(SEV_DEBUG,"Slave %d listener received command from Master", SlaveInfo.rank);
+    MPI_Recv(&d, sizeof(char), MPI_BYTE, MASTER_RANK, 
+             TAG_MASTERCMD, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+
+    if (d == MASTERCMD_EXIT) {
+      Slave_Exit();
+    }
+  }
+	*/
+}
+
+
+static void Start_Listener()
+{
+  pthread_attr_t  attr;
+  int             i;
+
+  // Setup thread properties
+  pthread_attr_init(&attr);
+  pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
+
+  // Start thread
+  int err = pthread_create(&(SlaveInfo.listener), &attr, Slave_Listener, NULL);
+  if (err) {
+    Vprint(SEV_ERROR,"Slave failed to start worker thread. %s. Terminating.\n", strerror(err));
+    Abort(1);
+  }
+}
+
+
+
 static void Slave(int processes, int rank)
 {
-  struct timeval  st,et,tv;
+  struct timeval  tv;
   slaveinfo_t    *si=&SlaveInfo;
   compressedb_t  *cb;
   workunit_t     *workunit;
@@ -1573,6 +1681,7 @@ static void Slave(int processes, int rank)
   si->rank   = rank;
   
   Init_Slave();
+  Start_Listener();
   Start_Workers();
 
   // Wait for all the ranks to fully init
@@ -1636,29 +1745,7 @@ static void Slave(int processes, int rank)
         pthread_join(SlaveInfo.workers[i], NULL);
       }
 
-      // Tell the writer thread it is done and wait for it
-      Vprint(SEV_DEBUG,"Slave %d waiting for writer to finish.\n",SlaveInfo.rank);
-      si->done = 1;
-      pthread_mutex_lock(&(SlaveInfo.resultb_lock));
-      pthread_cond_signal(&(SlaveInfo.resultb_nempty));
-      pthread_mutex_unlock(&(SlaveInfo.resultb_lock));
-      pthread_join(resultbuff_thread,NULL);
-      
-      // !!av: Gating hack
-      i = SlaveInfo.nprocs / ConcurrentWriters;
-      if( SlaveInfo.nprocs%ConcurrentWriters ) {
-        i++;
-      }
-      gettimeofday(&st, NULL);
-      while( i-- ) {
-        if( !(i%SlaveInfo.rank) ) {
-          Write(Fd, Cbuff, Nc);
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
-      }
-      gettimeofday(&et, NULL);
-      SlaveInfo.t_o  = ((et.tv_sec*1000000+et.tv_usec) -
-                       (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+      Slave_Exit();
       break;
     case WU_TYPE_SEQS:
       // Master is sending us sequence data; prepare for and read it
@@ -2022,10 +2109,18 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
 
 static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
 {
-  int rc;
+  int rc, thread_support;
 
   // Init MPI, get the number of MPI processes and our rank
   rc = MPI_Init(argc,argv);
+	/*
+  rc = MPI_Init_thread(argc,argv,MPI_THREAD_MULTIPLE, &thread_support);
+	if(thread_support != MPI_THREAD_MULTIPLE) {
+    Vprint(SEV_ERROR,"MPI_THREAD_MULTIPLE not supported. Terminating.\n");
+    Abort(rc);
+	}
+	*/
+
   if(rc != MPI_SUCCESS) {
     Vprint(SEV_ERROR,"Error starting MPI program. Terminating.\n");
     Abort(rc);
@@ -2201,6 +2296,7 @@ static void sighndler(int arg)
     write(2,"ms: Caught signal; cleaning up.\n",32);
   }
 
+	Master_Flush();
   cleanup();
   kill(getpid(), SIGKILL);
 }
@@ -2237,6 +2333,7 @@ void* killtimer(void *arg)
   Vprint(SEV_ERROR,"Master noticed time limit exceeded.  Terminating.\n\n");
 
   // Terminate our process in a way the MPI subsystem will pick up on
+	Master_Flush();
   cleanup();
   kill(getpid(), SIGKILL);
   Abort(1);

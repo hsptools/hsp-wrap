@@ -74,10 +74,12 @@ typedef struct {
 #define WU_TYPE_SEQD 2   // WU is sequence data
 #define WU_TYPE_SEQF 3   // WU is sequence data
 
+#define MASTERCMD_EXIT 1 // Flush your stuff and exit!
 
-// Tag for sed/recv work units and sequence data
-#define TAG_WORKUNIT 0
-#define TAG_SEQDATA  1
+// Tag for send/recv work units and sequence data
+#define TAG_WORKUNIT	0
+#define TAG_SEQDATA		1
+#define TAG_MASTERCMD	2
 
 
 // For now, there will be one fixed master
@@ -172,6 +174,7 @@ typedef struct st_slaveinfo {
   tscq_t          *wq;              // Work queue
   tscq_t          *rq;              // Request queue
   volatile int     worker_error;    // Error flag for worker threads
+  pthread_t        listener; 				// Listener for Master-Commands
   pthread_t        workers[NCORES]; // Array of handles to worker threads
   pthread_mutex_t  resultb_lock;    // Lock for the result buffer
   pthread_cond_t   resultb_nfull;   // Condition for not full
