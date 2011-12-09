@@ -3,7 +3,7 @@
 
 # optimized build (default)
 #CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
-CC= mpicc
+CC= cc
 OPTS=   
 CFLAGS= -O3 -Wall
 LIBS=   -lm -lz -lexpat
