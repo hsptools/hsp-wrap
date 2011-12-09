@@ -980,7 +980,7 @@ static void* Worker(void *arg)
     ib = idb = 0;
     gettimeofday(&st, NULL);
 
-    Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d Requesting at %d.%06d.\n",
+    Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d Requesting at %d.%06d.\n",
                  SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
 
     // Get a new request entry object
@@ -1016,7 +1016,7 @@ static void* Worker(void *arg)
       Vprint(SEV_DEBUG,"Slave %d Worker %d starting search.\n",SlaveInfo.rank,wid);
       // Inflate the zlib compressed block(s) into the SHM
       gettimeofday(&st, NULL);
-      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d inflating at %d.%06d.\n",
+      Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d inflating at %d.%06d.\n",
                    SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
 
       if( zinf_memcpy((unsigned char*)file_sizes->fs[q].shm,(compressedb_t*)(workunit->data),(size_t)workunit->len,&dcsz) != Z_OK ) {
@@ -1025,7 +1025,7 @@ static void* Worker(void *arg)
         return NULL;
       }
       gettimeofday(&et, NULL);
-      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
+      Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
                    SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
       t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
@@ -1037,7 +1037,7 @@ static void* Worker(void *arg)
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
-      Vprint(SEV_DEBUG,"[TIMING] Slave %d, Worker %d done with search at %d.%06d.\n",
+      Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d done with search at %d.%06d.\n",
                    SlaveInfo.rank, wid, tv.tv_sec, tv.tv_usec);
       //Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
@@ -1565,7 +1565,7 @@ static void Slave(int processes, int rank)
   int             qd=0,i,sz;
 
   gettimeofday(&tv, NULL);
-  Vprint(SEV_DEBUG,"[TIMING] Slave %d started at %d.%06d.\n",
+  Vprint(SEV_TIMING,"[TIMING] Slave %d started at %d.%06d.\n",
                SlaveInfo.rank, tv.tv_sec, tv.tv_usec);
   
   memset(si,0,sizeof(slaveinfo_t));

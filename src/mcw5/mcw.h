@@ -28,6 +28,7 @@
 #define SEV_NRML    0
 #define SEV_WARN    1
 #define SEV_DEBUG   2
+#define SEV_TIMING  3
 #define VERBOSITY   SEV_DEBUG
 
 
