@@ -607,12 +607,26 @@ static void Worker_WriteResults(char *data, int n, int wid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int rndx)
+static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int rndx)
 {
   struct timeval  st,et;
-  int             status,w;
+  int             status,w,i;
   float           io_time=0.0f;
+	char						log_max, log_id[33];
+	filesize_t     *fs;
 
+	// Form an "ID" for logging this sequence.
+	fs      = &(file_sizes->fs[qndx]);
+	log_max = (fs->size > 32) ? 32 : fs->size;
+	for( i=0; i<log_max; ++i) {
+		if( fs->shm[i] == '\n' || fs->shm[i] == '\r' ) {
+			break;	
+		}
+		else {
+			log_id[i] = fs->shm[i];
+		}
+	}
+	log_id[i] = 0;
 
   // Wait for the child to finish
   if( (w=waitpid(pid,&status,0)) < 0 ) {
@@ -620,26 +634,30 @@ static float Worker_ChildIO(int rank, int pid, int wid, int rndx)
     // There was an error with the child DB process
     Vprint(SEV_ERROR,"Worker's wait on child failed.  Terminating.\n");
     Abort(1);
-  }
-
+	}
   // Check child exit status
   if( w ) {
     if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
       // The slave's child seemes to have finished correctly
       Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
-             SlaveInfo.rank,wid);
+             SlaveInfo.rank,wid);		
+			// Log success
+			fprintf(SlaveInfo.log, "S    %s\n", log_id);
     } else {
       // There was an error with the child DB process
       Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
       if( WIFSIGNALED(status) ) {
         Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
       }
+			// Log failure
+			fprintf(SlaveInfo.log, "E(1) %s\n", log_id);
     } 
   }
 
   // The child process is gone:  Write any results to our node's buffer.
   gettimeofday(&st, NULL);
-  Worker_WriteResults(file_sizes->fs[rndx].shm, file_sizes->fs[rndx].size, wid);
+	fs = &(file_sizes->fs[rndx]);
+  Worker_WriteResults(fs->shm, fs->size, wid);
   gettimeofday(&et, NULL);
   io_time += ((et.tv_sec*1000000+et.tv_usec) - 
              (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
@@ -783,7 +801,7 @@ static void Worker_Child_MapFDs(int rank, int wid)
 }
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
+static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
 {
   char **argv;
   char  name[256],exe_name[256];
@@ -841,7 +859,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int rndx)
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,rndx);
+    io_time = Worker_ChildIO(rank,pid,wid,qndx,rndx);
   } else if( !pid ) {
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
@@ -1054,7 +1072,7 @@ static void* Worker(void *arg)
       idb = dcsz;
       file_sizes->fs[q].size = dcsz;
       file_sizes->fs[r].size = 0;
-      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, r);
+      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
@@ -1543,10 +1561,26 @@ static void CreateResultBuffer()
 
 static void Init_Slave()
 {
-  char fn[1024];
+  char fn[1024], *jn;
   long wr;
   int  rv,fd;
   
+  // Open the log file
+  if( (fd=open("log", O_WRONLY|O_CREAT|O_TRUNC/*|O_NOATIME*/,
+					                S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) < 0 ) {
+    Vprint(SEV_ERROR,"Failed to open log for writing. Terminating.\n");
+    Abort(1);
+  }
+	SlaveInfo.log = fdopen(fd, "w");
+
+	// Log header
+	fprintf(SlaveInfo.log, "#MCW Log File\n");
+  jn = getenv("MCW_JOB_NAME");
+	if (jn) {
+		fprintf(SlaveInfo.log, "#mcw.job=%s\n", jn);
+	}
+	fprintf(SlaveInfo.log, "#mcw.rank=%d\n", SlaveInfo.rank);
+	fflush(SlaveInfo.log);
 
   // Build a file name for our private exe copy
   sprintf(fn,"%s",args.exe_base);
@@ -1605,6 +1639,11 @@ static void Slave_Exit()
   gettimeofday(&et, NULL);
   SlaveInfo.t_o  = ((et.tv_sec*1000000+et.tv_usec) -
                    (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+
+	// Finalize log
+	fprintf(SlaveInfo.log, "\n#END");
+	fflush(SlaveInfo.log);
+	fclose(SlaveInfo.log);
 }
 
 
@@ -1622,7 +1661,7 @@ static void* Slave_Listener(void* arg)
     sleep(1);
   }
 
-  Vprint(SEV_ERROR,"Slave noticed time limit exceeded.  Flushing.\n\n");
+  Vprint(SEV_NRML,"Slave noticed time limit exceeded.  Flushing.\n\n");
 	Slave_Exit();
 
 	// END HACK
@@ -2161,7 +2200,7 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
       snprintf(fn, 1024, "job-%s/%02d/%d", jn, (*rank)/100, *rank);
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
     } else {
-      snprintf(fn, 1024, "mcw-out", jn);
+      snprintf(fn, 1024, "mcw-out");
       mkdir(fn,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
 
       snprintf(fn, 1024, "mcw-out/%02d", (*rank)/100);

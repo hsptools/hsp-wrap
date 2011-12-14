@@ -29,7 +29,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_DEBUG
+#define VERBOSITY   SEV_WARN
 
 
 // Maximum number of DB files
@@ -191,6 +191,7 @@ typedef struct st_slaveinfo {
   unsigned long    b_o;             // Output (compressed) byte size
   unsigned long    b_id;            // Input (decompressed) byte size
   unsigned long    b_od;            // Output (uncompressed) byte size
+	FILE						*log;							// Log file descriptor
 } slaveinfo_t;
 
 
