@@ -1,0 +1,26 @@
+.TH ZEXTRACT "1" "December 2011" "MCW Tools" "User Commands"
+.SH NAME
+zextract \- extract \fBmcw\fR output files
+.SH SYNOPSIS
+.B zextract
+\fIFILENAME\fR
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Extract an output file created by the \fBmcw\fR tool.  \fBmcw\fR output
+is written the the filesystem in a compressed format to reduce network
+and filesystem contention, especially on distributed network storage.
+These files are normally stored in \fIoutput-dir/?/??/foo.stdout\fR.
+.br
+This tool extracts said files back into the original format, which is
+normally plaintext.  The output is written straight to standard output.
+.PP
+Exit status is 0 if OK, 1 if problems.
+.SH SEE ALSO                                                                                               
+gather (1)
+.SH AUTHOR
+Written by Paul Giblock and Aaron Vose.
+.SH "REPORTING BUGS"
+Report bugs to <pgiblock@utk.edu>.
+.SH COPYRIGHT
+Copyright \(co 2011 (TODO: Pick a license)

@@ -1,0 +1,32 @@
+.TH COMPRESSFASTA "1" "December 2011" "MCW Tools" "User Commands"
+.SH NAME
+compressfasta \- compress and block a fasta file
+.SH SYNOPSIS
+.B compressfasta
+\fIINPUTFASTA\fR \fIBLOCKSIZE\fR \fIOUTPUT\fR
+.SH DESCRIPTION
+.\" Add any additional description here
+.PP
+Compresses the FASTA-format input file, \fIINPUTFASTA\fR, into a format
+appropriate for use with \fBmcw\fR.  The \fIOUTPUT\fR parameter determines
+the name for the output file.  
+.br
+The resulting file consists of blocks of at least size \fIBLOCKSIZE\fR bytes.
+The final block in the output may be of a smaller size.  The \fIBLOCKSIZE\fR
+determines how much data will be sent to each node when there is a need for
+more work.  Choosing a larger size will help relieve the overhead of
+communication and process creation.  However, too large of a size may cause an
+imbalance of work across the nodes.  Experimentation is best for determining an
+optimal \fIBLOCKSIZE\fR, however, a good starting point is to aim for around 10
+blocks to execute on each node.
+.br
+The resulting blocks are then individually compressed for optimized transmission
+during runtime.
+.PP
+Exit status is 0 if OK, 1 if problems.
+.SH AUTHOR
+Written by Paul Giblock and Aaron Vose.
+.SH "REPORTING BUGS"
+Report bugs to <pgiblock@utk.edu>.
+.SH COPYRIGHT
+Copyright \(co 2011 (TODO: Pick a license)
