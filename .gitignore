@@ -1,5 +1,6 @@
-/target
 *.o
+/Makefile
+/target
 /src/mcw5/SHMclean
 /src/mcw5/compressfasta
 /src/mcw5/compressfasta0
