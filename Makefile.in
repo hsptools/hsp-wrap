@@ -6,9 +6,9 @@ DEMOS_DIR     = demos
 TOOLS_DIR     = tools
 TARGET_DIR    = %PREFIX%
 
-.PHONY: stdiowrap mcw ncbi hmmer tools
+.PHONY: stdiowrap mcw ncbi tools
 
-all: stdiowrap mcw ncbi hmmer tools
+all: stdiowrap mcw ncbi tools
 
 stdiowrap:
 	$(MAKE) -C $(STDIOWRAP_DIR)
@@ -32,7 +32,7 @@ clean:
 	$(MAKE) -C $(HMMER_DIR) clean
 	rm -rf target
 
-install: install-ncbi install-hmmer install-tools
+install: install-ncbi install-tools
 
 install-mcw: mcw
 	# Binaries

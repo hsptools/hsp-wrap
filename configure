@@ -27,7 +27,7 @@ while true; do
 done
 
 # Configure HSP for installation
-sed "s:%PREFIX%:$TARGET_DIR:g" Makefile.in > Makefile
+sed "s:%PREFIX%:$PREFIX:g" Makefile.in > Makefile
 
 # Configure HMMER
 pushd .
