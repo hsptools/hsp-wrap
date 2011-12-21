@@ -27,12 +27,15 @@ char *equery; // End of queries
 // Finds the length of the query sequence seq
 static int sequence_length(char *seq)
 {
-  char *p;
+  char *p, *lp;
 
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
-  for(p=seq+1; (p<equery) && (*p != '>'); p++);
-  
+  for (p=seq+1, lp=seq; p<equery; lp = p++) {
+    if (*p == '>' && (*lp == '\n' || *lp == '\r'))
+      break;
+  }
+
   // Return the diff of start and end
   return ((int)(p-seq));
 }
