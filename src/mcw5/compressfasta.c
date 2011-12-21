@@ -249,7 +249,7 @@ static void ZCompressWrite(void *source, int sz, FILE *dest, int level)
 
 void print_usage(FILE *f)
 {
-  fprintf(f, "usage: compressfasta <fasta_file> <block_size> <output_file>\n");
+  fprintf(f, "usage: compressfasta [-v] <fasta_file> <block_size> <output_file>\n");
 }
 
 
@@ -263,7 +263,7 @@ void print_help()
 int main(int argc, char **argv)
 {
   char   *seq;
-  int     i, bsz;
+  int     i, bsz, block_num;
   size_t  sz;
   FILE   *f;
 
@@ -298,6 +298,7 @@ int main(int argc, char **argv)
   }
 
   // Get a block of sequences to put in output file
+	block_num = 0;
   for(i=0,seq=NULL; !i || seq; i++) {
     // Get a block
     for(sz=0; (sz < bsz) && (seq=Get_Sequence()); sz+=nfo.sequencels[nfo.nsequences-1]) {
@@ -319,7 +320,8 @@ int main(int argc, char **argv)
     // I happen to know that "seq=Get_Sequence()" will always be contiguous
     // non-terminated sequences when called in succsession like above.
     if( sz ) {
-      ZCompressWrite(nfo.sequences[0], sz, f, Z_DEFAULT_COMPRESSION);
+			printf("Block %d, %d sequences.\n", block_num++, nfo.nsequences);
+      ZCompressWrite(nfo.sequences[0], sz, f, CF_COMPRESSION_LEVEL);
     }
 
     // Get ready for the next block
