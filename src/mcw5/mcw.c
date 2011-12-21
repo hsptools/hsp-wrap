@@ -1580,6 +1580,7 @@ static void Init_Slave()
 		fprintf(SlaveInfo.log, "#mcw.job=%s\n", jn);
 	}
 	fprintf(SlaveInfo.log, "#mcw.rank=%d\n", SlaveInfo.rank);
+	fprintf(SlaveInfo.log, "#mcw.version=0.1.0\n");
 	fflush(SlaveInfo.log);
 
   // Build a file name for our private exe copy
@@ -1641,7 +1642,7 @@ static void Slave_Exit()
                    (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
 
 	// Finalize log
-	fprintf(SlaveInfo.log, "\n#END");
+	fprintf(SlaveInfo.log, "#END");
 	fflush(SlaveInfo.log);
 	fclose(SlaveInfo.log);
 }

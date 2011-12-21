@@ -4,6 +4,7 @@
 # optimized build (default)
 #CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
 CC= cc
+CXX= CC
 OPTS=   
 CFLAGS= -O3 -Wall
 LIBS=   -lm -lz -lexpat
@@ -11,6 +12,7 @@ LIBS=   -lm -lz -lexpat
 # debug build
 #DBG_CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
 DBG_CC= mpicc
+DBG_CXX= CC
 DBG_OPTS=   
 DBG_CFLAGS= -g -Wall
 DBG_LIBS=   -lm -lz -lexpat
@@ -18,6 +20,7 @@ DBG_LIBS=   -lm -lz -lexpat
 # profile options
 #PROF_CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
 PROF_CC= mpicc
+PROF_CXX= CC
 PROF_OPTS=
 PROF_CFLAGS= -O3 -Wall
 PROF_LIBS=   -lm -lz -lexpat $(FPMPI_LDFLAGS)
@@ -30,11 +33,12 @@ PROF_LIBS=   -lm -lz -lexpat $(FPMPI_LDFLAGS)
 all: mcw wrap zextract tools
 
 tools: SHMclean xmlparse fastatools mol2tools
-fastatools: fastalens fastadist splitfasta sortfasta compressfasta
+fastatools: fastalens fastadist splitfasta sortfasta compressfasta compressfasta0
 mol2tools: splitmol2 compressmol2
 
 # debug build
 debug: CC     = $(DBG_CC)
+debug: CXX    = $(DBG_CXX)
 debug: OPTS   = $(DBG_OPTS)
 debug: CFLAGS = $(DBG_CFLAGS)
 debug: LIBS   = $(DBG_LIBS)
@@ -42,6 +46,7 @@ debug: clean all
 
 # profile build
 profile: CC     = $(PROF_CC)
+profile: CXX    = $(PROF_CXX)
 profile: OPTS   = $(PROF_OPTS)
 profile: CFLAGS = $(PROF_CFLAGS)
 profile: LIBS   = $(PROF_LIBS)
@@ -92,10 +97,18 @@ splitfasta: splitfasta.o Makefile
 #
 
 compressfasta.o: compressfasta.c Makefile
-	$(CC) $(OPTS) $(CFLAGS) -c compressfasta.c
+	$(CC) $(OPTS) $(CFLAGS) -DCF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION -c compressfasta.c
 
 compressfasta: compressfasta.o Makefile
 	$(CC) $(OPTS) $(CFLAGS) -o compressfasta compressfasta.o $(LIBS)
+
+#
+
+compressfasta0.o: compressfasta.c Makefile
+	$(CC) $(OPTS) $(CFLAGS) -DCF_COMPRESSION_LEVEL=Z_NO_COMPRESSION -c compressfasta.c -o compressfasta0.o
+
+compressfasta0: compressfasta0.o Makefile
+	$(CC) $(OPTS) $(CFLAGS) -o compressfasta0 compressfasta0.o $(LIBS)
 
 ##
 
@@ -112,6 +125,11 @@ SHMclean.o: SHMclean.c Makefile
 
 SHMclean: SHMclean.o Makefile
 	$(CC) $(OPTS) $(CFLAGS) -o SHMclean SHMclean.o $(LIBS)
+
+##
+
+recover: recover.cc Makefile
+	$(CXX) $(OPTS) $(CFLAGS) $(LIBS) recover.cc -o recover
 
 ##
 
@@ -145,7 +163,7 @@ wrap: wrap.o Makefile
 
 # Maintenance
 clean:
-	rm -f *.o mcw sortfasta SHMclean zextract wrap xmlparse fastalens fastadist compressfasta compressmol2 splitmol2 splitfasta
+	rm -f *.o mcw sortfasta SHMclean zextract wrap xmlparse fastalens fastadist compressfasta compressfasta0 compressmol2 splitmol2 splitfasta
 
 strip: clean
 	rm -f *~ \#*
