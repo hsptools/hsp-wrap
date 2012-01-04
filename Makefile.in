@@ -32,11 +32,13 @@ clean:
 	$(MAKE) -C $(HMMER_DIR) clean
 	rm -rf target
 
-install: install-ncbi install-tools
+install: install-mcw install-ncbi install-tools
 
 install-mcw: mcw
 	# Binaries
 	mkdir -p $(TARGET_DIR)/bin
+	mkdir -p $(TARGET_DIR)/share/doc
+	mkdir -p $(TARGET_DIR)/share/man/man1
 	cp -f $(MCW_DIR)/mcw            \
 	      $(MCW_DIR)/sortfasta      \
 	      $(MCW_DIR)/SHMclean       \
@@ -53,7 +55,6 @@ install-mcw: mcw
 	      $(MCW_DIR)/compressfasta0 \
 	      $(TARGET_DIR)/bin
 	# Manpages
-	mkdir -p $(TARGET_DIR)/share/man/man1
 	cp -f doc/man/* $(TARGET_DIR)/share/man/man1
 	gzip $(TARGET_DIR)/share/man/man1/*.1
 	# Demos
@@ -68,7 +69,7 @@ install-ncbi: ncbi
 
 install-hmmer: hmmer
 	mkdir -p $(TARGET_DIR)/lib/mcw
-	cp -f $(HMMER_DIR)/ncbi/build/hmmscan $(TARGET_DIR)/lib/mcw
+	#TODO: cp -f $(HMMER_DIR)/... $(TARGET_DIR)/lib/mcw
 
 install-tools: tools
 	mkdir -p $(TARGET_DIR)/opt/ncbi/bin
