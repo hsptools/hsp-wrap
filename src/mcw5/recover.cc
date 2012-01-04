@@ -29,6 +29,11 @@ static int sequence_length(char *seq)
 {
   char *p, *lp;
 
+	// Verify input
+	if (seq >= nfo.equery) {
+		return 0;
+	}
+
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
   for (p=seq+1, lp=seq; p<equery; lp = p++) {

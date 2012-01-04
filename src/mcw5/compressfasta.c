@@ -62,6 +62,32 @@ static int seqcmp(char *s, char *m)
 }
 
 
+// Paul version
+// Finds the length of the query sequence seq
+/*
+static int Sequence_Length(char *seq)
+{
+  char *p, *lp;
+
+	// Verify input
+	if (seq >= nfo.equery) {
+		return 0;
+	}
+
+  // Look forward until end of sequences are found or
+  // new sequence start '>' is found.
+  for (p=seq+1, lp=seq; p<nfo.equery; lp = p++) {
+    if (*p == '>' && (*lp == '\n' || *lp == '\r'))
+      break;
+  }
+
+  // Return the diff of start and end
+  return ((int)(p-seq));
+}
+*/
+
+
+// Aaron version
 static int Sequence_Length(char *seq)
 {
   char *p = seq;
