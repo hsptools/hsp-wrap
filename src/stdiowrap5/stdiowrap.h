@@ -43,9 +43,9 @@ extern int     stdiowrap_fclose(FILE *stream);
 
 // Cursor positioning / File status
 extern int     stdiowrap_fseek(FILE *stream, long offset, int whence);
-extern int     stdiowrap_fseeko(FILE *stream, off_t offset, int whence);
+extern int     stdiowrap_fseeko(FILE *stream, /*off_t*/long offset, int whence);
 extern long    stdiowrap_ftell(FILE *stream);
-extern off_t   stdiowrap_ftello(FILE *stream);
+extern /*off_t*/long   stdiowrap_ftello(FILE *stream);
 extern void    stdiowrap_rewind(FILE *stream);
 extern int     stdiowrap_feof(FILE *stream);
 
