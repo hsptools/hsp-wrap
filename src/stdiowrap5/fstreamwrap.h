@@ -1,19 +1,10 @@
 #ifndef FSTREAMWRAP_H
 #define FSTREAMWRAP_H
 
-#include <istream>
-#include <ostream>
+// Make it easier to inject this source, squash errors if included into C source
+#ifdef __cplusplus
 
-#ifndef STDIOWRAP_C
-#ifdef STDIOWRAP_AUTO
-#define std::ifstream    stdiowrap::ifstream
-#define ifstream         stdiowrap::ifstream
-#define std::ofstream    stdiowrap::ofstream
-#define ofstream         stdiowrap::ofstream
-#define std::fstream     stdiowrap::fstream
-#define fstream          stdiowrap::fstream
-#endif
-#endif
+#include <fstream>
 
 namespace stdiowrap {
 
@@ -54,6 +45,7 @@ class ifstream : public std::istream
   explicit ifstream(const char *fn, std::ios_base::openmode m = std::ios_base::in);
 
   void open(const char *fn, std::ios_base::openmode m = std::ios_base::in);
+	void close();
 
 	std::filebuf *rdbuf() const;
 	bool is_open();
@@ -72,6 +64,7 @@ class ofstream : public std::ostream
   explicit ofstream(const char *fn, std::ios_base::openmode m = std::ios_base::out);
 
   void open(const char *fn, std::ios_base::openmode m = std::ios_base::out);
+	void close();
 
 	std::filebuf *rdbuf() const;
 	bool is_open();
@@ -90,6 +83,7 @@ class fstream : public std::iostream
   explicit fstream(const char *fn, std::ios_base::openmode m = (std::ios_base::in | std::ios_base::out));
 
   void open(const char *fn, std::ios_base::openmode m = (std::ios_base::in | std::ios_base::out));
+	void close();
 
 	std::filebuf *rdbuf() const;
 	bool is_open();
@@ -101,5 +95,27 @@ class fstream : public std::iostream
 };
 
 }
+
+
+#ifndef STDIOWRAP_C
+#ifdef STDIOWRAP_AUTO
+namespace std {
+	namespace stdiowrapauto {
+		typedef ::stdiowrap::ifstream ifstream;
+		typedef ::stdiowrap::ofstream ofstream;
+		typedef ::stdiowrap::fstream  fstream;
+	}
+}
+
+#define ifstream    stdiowrapauto::ifstream
+#define ofstream    stdiowrapauto::ofstream
+#define fstream     stdiowrapauto::fstream
+
+#endif
+#endif
+
+#else  // __cplusplus
+#warning "fstreamwrap.h included in Non-C++ source"
+#endif // __cplusplus
 
 #endif

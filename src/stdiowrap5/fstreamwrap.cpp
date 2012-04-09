@@ -23,6 +23,12 @@ ifstream::open(const char *fn, std::ios_base::openmode m) {
 	// TODO: set failbit
 }
 
+void
+ifstream::close() {
+	buf.close();
+	// TODO: set failbit
+}
+
 std::filebuf*
 ifstream::rdbuf() const {
 	return const_cast<stdiowrap::filebuf*>(&buf);
@@ -52,6 +58,12 @@ ofstream::open(const char *fn, std::ios_base::openmode m) {
 	// TODO: set failbit
 }
 
+void
+ofstream::close() {
+	buf.close();
+	// TODO: set failbit
+}
+
 std::filebuf*
 ofstream::rdbuf() const {
 	return const_cast<stdiowrap::filebuf*>(&buf);
@@ -78,6 +90,12 @@ fstream::fstream(const char *fn, std::ios_base::openmode m)
 void
 fstream::open(const char *fn, std::ios_base::openmode m) {
 	buf.open(fn, m);
+	// TODO: set failbit
+}
+
+void
+fstream::close() {
+	buf.close();
 	// TODO: set failbit
 }
 
