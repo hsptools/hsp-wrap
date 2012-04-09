@@ -37,30 +37,38 @@
 #define fprintf(...)     stdiowrap_fprintf(__VA_ARGS__)
 #endif
 
+#ifdef __cplusplus
+	extern "C" {
+#endif
+
 // Open and Close
-extern FILE*   stdiowrap_fopen(const char *path, const char *mode);
-extern int     stdiowrap_fclose(FILE *stream);
+FILE*   stdiowrap_fopen(const char *path, const char *mode);
+int     stdiowrap_fclose(FILE *stream);
 
 // Cursor positioning / File status
-extern int     stdiowrap_fseek(FILE *stream, long offset, int whence);
-extern int     stdiowrap_fseeko(FILE *stream, /*off_t*/long offset, int whence);
-extern long    stdiowrap_ftell(FILE *stream);
-extern /*off_t*/long   stdiowrap_ftello(FILE *stream);
-extern void    stdiowrap_rewind(FILE *stream);
-extern int     stdiowrap_feof(FILE *stream);
+int     stdiowrap_fseek(FILE *stream, long offset, int whence);
+int     stdiowrap_fseeko(FILE *stream, /*off_t*/long offset, int whence);
+long    stdiowrap_ftell(FILE *stream);
+/*off_t*/long   stdiowrap_ftello(FILE *stream);
+void    stdiowrap_rewind(FILE *stream);
+int     stdiowrap_feof(FILE *stream);
 
 // Read
-extern size_t  stdiowrap_fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
-extern char*   stdiowrap_fgets(char *s, int size, FILE *stream);
-extern int     stdiowrap_fgetc(FILE *stream);
-extern int     stdiowrap_getc(FILE *stream);
-extern int     stdiowrap_ungetc(int c, FILE *stream);
-extern int     stdiowrap_fscanf(FILE *stream, const char *format, ...);
+size_t  stdiowrap_fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+char*   stdiowrap_fgets(char *s, int size, FILE *stream);
+int     stdiowrap_fgetc(FILE *stream);
+int     stdiowrap_getc(FILE *stream);
+int     stdiowrap_ungetc(int c, FILE *stream);
+int     stdiowrap_fscanf(FILE *stream, const char *format, ...);
 
 // Write
-extern int     stdiowrap_fflush(FILE *stream);
-extern size_t  stdiowrap_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
-extern int     stdiowrap_fprintf(FILE *stream, const char *format, ...);
+int     stdiowrap_fflush(FILE *stream);
+size_t  stdiowrap_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+int     stdiowrap_fprintf(FILE *stream, const char *format, ...);
+
+#ifdef __cplusplus
+	}
+#endif
 
 #endif
 
