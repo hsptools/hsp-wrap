@@ -1,18 +1,15 @@
-#ifndef STDSTREAMWRAP_H
-#define STDSTREAMWRAP_H
+#ifndef STREAMBUFWRAP_H
+#define STREAMBUFWRAP_H
 
 #include <fstream>
 #include <iostream>
 #include <streambuf>
 
 
-extern "C" {
-  #include "stdiowrap.h"
-}
-
+namespace stdiowrap {
 
 // C++ class implementing the streambuf interface
-class stdstreamwrap : public std::streambuf
+class streambuf : public std::streambuf
 {
  public:
   // The streambuf impl works by you providing it with pointers to a buffer.
@@ -20,7 +17,7 @@ class stdstreamwrap : public std::streambuf
   // You can read more here: http://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.0/classstd_1_1basic__streambuf.html
   static const size_t BUFF_SIZE = 1024;
 
-  stdstreamwrap() :
+  streambuf() :
     m_handle(((FILE*)-1))
     {
       // Initialize get and set pointers
@@ -28,7 +25,7 @@ class stdstreamwrap : public std::streambuf
       setp(m_outBuff, m_outBuff + BUFF_SIZE - 1);
     }  
 
-  stdstreamwrap(FILE *h) :
+  streambuf(FILE *h) :
     m_handle(h)
     {
       // Initialize get and set pointers
@@ -36,7 +33,7 @@ class stdstreamwrap : public std::streambuf
       setp(m_outBuff, m_outBuff + BUFF_SIZE - 1);
     }
   
-  ~stdstreamwrap()
+  ~streambuf()
     {
       // Do any cleanup you may need hear (release refcount, etc..)
     }
@@ -59,5 +56,7 @@ class stdstreamwrap : public std::streambuf
   char  m_inBuff[BUFF_SIZE];
   char  m_outBuff[BUFF_SIZE];
 };
+
+}
 
 #endif

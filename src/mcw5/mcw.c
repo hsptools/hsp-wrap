@@ -841,8 +841,13 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
   setenv("MCW_FI_SHM_FD",name,1);
+  sprintf(name,"%s/%s%d/%s",
+          args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
+  setenv("MCW_DB_FULL_PATH",name,1);
   sprintf(name,"%d",wid);
   setenv("MCW_WID",name,1);
+
+	// TODO: remove obsolete stuff
   sprintf(name,"%s/%s%d",
           args.db_path,args.db_prefix,node/loadstride);
   setenv("BLASTMAT",name,1);

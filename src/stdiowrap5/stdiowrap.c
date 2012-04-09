@@ -53,7 +53,6 @@ static void *Next_FILE = ((void*)1);
 static WFILE **IncludedWFILEs  = NULL;
 static int     nIncludedWFILEs = 0;
 
-
 ////////////////////////////////////////////////////////////////////////////////
 // Internal Static Functions
 ////////////////////////////////////////////////////////////////////////////////
@@ -184,6 +183,21 @@ static WFILE* new_WFILE(const char *fn)
   WFILE *wf;
   int    rv;
 
+	// Map filename to proper SHM name
+	char *name;
+	char  buf[32];
+	if( !strcmp(fn,":DB:") ) {
+		name = getenv("MCW_DB_FULL_PATH");
+	} else if( !strcmp(fn,":IN:") ) {
+		sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
+		name = buf;
+	} else if( !strcmp(fn,":OUT:") ) {
+		sprintf(buf,":STDOUT%d",atoi(getenv("MCW_WID"))*2+1);
+		name = buf;
+	} else { 
+		name = fn;
+	}
+	
   // Malloc a new WFILE
   if( !(wf=malloc(sizeof(WFILE))) ) {
     fprintf(stderr,"stdiowrap: new_WFILE: failed to allocate WFILE.\n");
@@ -195,7 +209,7 @@ static WFILE* new_WFILE(const char *fn)
   wf->stream = Next_FILE++;
 
   // Copy file path
-  if( !(wf->name = strdup(fn)) ) {
+  if( !(wf->name = strdup(name)) ) {
     destroy_WFILE(wf);
     errno = ENOMEM;
     return NULL;

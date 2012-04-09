@@ -1,5 +1,8 @@
+.*.sw?
 *.o
 /Makefile
+/.waf-*
+/build
 /target
 /src/mcw5/SHMclean
 /src/mcw5/compressfasta
