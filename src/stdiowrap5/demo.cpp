@@ -1,5 +1,12 @@
-#include "stdstreamwrap.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+
 #include <iostream>
+
+#include "streambufwrap.h"
+#include "stdiowrap.h"
 
 using namespace std;
 
@@ -21,8 +28,8 @@ int main (int argc, char *argv[])
   }
 
   // Turn them into C++ streams
-  stdstreamwrap in_stdsw(in_handle);
-  stdstreamwrap out_stdsw(out_handle);
+	stdiowrap::streambuf in_stdsw(in_handle);
+	stdiowrap::streambuf out_stdsw(out_handle);
   istream is(&in_stdsw);
   ostream os(&out_stdsw);
 

@@ -1,19 +1,62 @@
 #include <fstream>
 #include <iostream>
 #include <streambuf>
-#include "stdstreamwrap.h"
 
-extern "C" {
-  #include "stdiowrap.h"
+#include "fstreamwrap.h"
+#include "stdiowrap.h"
+
+
+namespace stdiowrap {
+
+
+filebuf::filebuf()
+: m_handle(((FILE*)-1))
+{
+	// Initialize get and set pointers
+	setg(NULL, NULL, NULL);
+	setp(m_outBuff, m_outBuff + BUFF_SIZE - 1);
+}  
+
+
+filebuf::filebuf(FILE *h)
+: m_handle(h)
+{
+	// Initialize get and set pointers
+	setg(NULL, NULL, NULL);
+	setp(m_outBuff, m_outBuff + BUFF_SIZE - 1);
 }
 
 
-//
-// Interface
-//
+filebuf::~filebuf()
+{
+	// Do any cleanup you may need here (release refcount, etc..)
+}
 
 
-int stdstreamwrap::open(char *fn, char *mode)
+static const char*
+cpp_openmode_to_c(std::ios_base::openmode m) {	
+	using namespace std;
+	if (m == (ios_base::in))
+		return "r";
+	else if (m == (ios_base::out | ios_base::trunc))
+		return "w";
+	else if (m == (ios_base::out))
+		return "w";
+	else if (m == (ios_base::out | ios_base::app))
+		return "a";
+	else if (m == (ios_base::in | ios_base::out))
+		return "r+";
+	else if (m == (ios_base::in | ios_base::out | ios_base::trunc))
+		return "w+";
+	else if (m == (ios_base::in | ios_base::out | ios_base::app))
+		return "a+";
+	else
+		return NULL;
+}
+
+
+int
+filebuf::open(const char *fn, const char *mode)
 {
   FILE *in_handle;
 
@@ -26,12 +69,36 @@ int stdstreamwrap::open(char *fn, char *mode)
 }
 
 
-void stdstreamwrap::close()
+filebuf*
+filebuf::open(const char *fn,  std::ios_base::openmode m)
+{
+	const char *mode = cpp_openmode_to_c(m);
+	
+	if (mode && this->open(fn, mode)) {
+		return this;
+	} else {
+		return NULL;
+	}
+}
+
+
+filebuf*
+filebuf::close()
 {
   if( m_handle > 0 ){
     stdiowrap_fclose(m_handle);
   }
   m_handle = ((FILE*)-1);
+
+	// TODO: Actual error checking
+	return this;
+}
+
+
+bool
+filebuf::is_open()
+{
+	return m_handle >= 0;
 }
 
 
@@ -39,7 +106,8 @@ void stdstreamwrap::close()
 // Implementation of Virtual Interface
 //
 
-stdstreamwrap::int_type stdstreamwrap::overflow(stdstreamwrap::int_type c)
+filebuf::int_type
+filebuf::overflow(filebuf::int_type c)
 {
   char*     begin = pbase();
   char*     end   = pptr();
@@ -67,7 +135,8 @@ stdstreamwrap::int_type stdstreamwrap::overflow(stdstreamwrap::int_type c)
 }
 
 
-stdstreamwrap::int_type stdstreamwrap::sync()
+filebuf::int_type
+filebuf::sync()
 {
   // Flush out our buffer
   int_type ret = overflow(traits_type::eof());
@@ -81,7 +150,8 @@ stdstreamwrap::int_type stdstreamwrap::sync()
 }
 
 
-stdstreamwrap::int_type stdstreamwrap::underflow()
+filebuf::int_type
+filebuf::underflow()
 {
   // Get as much as possible
   size_t len = stdiowrap_fread(m_inBuff, 1, BUFF_SIZE, m_handle);
@@ -99,3 +169,5 @@ stdstreamwrap::int_type stdstreamwrap::underflow()
     return traits_type::not_eof(m_inBuff[0]);
   }
 }
+
+} // namespace stdiowrap
