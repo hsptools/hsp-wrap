@@ -903,6 +903,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     strm.avail_in = 0;
     ret = inflateInit(&strm);
     if( ret != Z_OK ) {
+			fprintf(stderr, "inflate: Could not initialize!\n");
       return ret;
     }
     
@@ -911,6 +912,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     do {
       if( !(strm.avail_in=((bsz>=CHUNK)?(CHUNK):(bsz))) ) {
         safe_inflateEnd(&strm);
+				fprintf(stderr, "inflate: Could not read data chunk\n");
         return Z_DATA_ERROR;
       }
       memcpy(in, &(cb->data)+cb->len-bsz, strm.avail_in);
@@ -926,8 +928,10 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
         case Z_NEED_DICT:
         case Z_DATA_ERROR:
         case Z_MEM_ERROR:
+					fprintf(stderr, "inflate: Error!\n");
           safe_inflateEnd(&strm);
         case Z_STREAM_ERROR:
+					fprintf(stderr, "inflate: Stream Error!\n");
           return ret;
         }
         have = CHUNK - strm.avail_out;
@@ -943,6 +947,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     // If the stream ended before using all the data
     // in the block, return error.
     if( bsz ) {
+			fprintf(stderr, "inflate: Data Error!\n");
       return Z_DATA_ERROR;
     }
   }
@@ -1068,6 +1073,14 @@ static void* Worker(void *arg)
                    SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
       t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+
+			if (dcsz > QUERYBUFF_SIZE) {
+				Vprint(SEV_ERROR,"Compressed block of size %ld is too large for query buffer maximum of %ld.\n",
+						       dcsz, QUERYBUFF_SIZE);
+        si->worker_error = wid;
+				return NULL;
+			}
+				
       ib  = workunit->len;
       idb = dcsz;
       file_sizes->fs[q].size = dcsz;

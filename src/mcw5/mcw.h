@@ -12,7 +12,7 @@
 
 
 // Size of the I/O buffers
-#define QUERYBUFF_SIZE      (1L<<20)                            // 1   MiB
+#define QUERYBUFF_SIZE      (2L<<20)                            // 2   MiB
 #define RESULTBUFF_SIZE     (1L<<27)                            // 128 MiB
 #define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*NCORES)
 #define RESULTBUFF_SHM_SIZE (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
@@ -29,7 +29,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_WARN
+#define VERBOSITY   SEV_TIMING
 
 
 // Maximum number of DB files
