@@ -37,8 +37,8 @@ test.o: test.c stdiowrap.h Makefile
 test: test.o stdiowrap.o Makefile
 	${cc} -Wall -O2 -o test test.o stdiowrap.o
 
-demo.o: demo.c stdiowrap.h streambufwrap.h Makefile
-	${CC} -Wall -O2 -c demo.c
+demo.o: demo.cpp stdiowrap.h streambufwrap.h Makefile
+	${CC} -Wall -O2 -c demo.cpp
 
 demo: demo.o stdiowrap.o streambufwrap.o Makefile
 	${CC} -o demo demo.o stdiowrap.o streambufwrap.o
