@@ -5,6 +5,11 @@
 #include "fstreamwrap.h"
 #include "stdiowrap.h"
 
+#define DEBUG 0
+#ifdef DEBUG
+#define TRACE(x) std::cerr << x << std::endl;
+#endif
+
 
 namespace stdiowrap {
 
@@ -59,7 +64,8 @@ int
 filebuf::open(const char *fn, const char *mode)
 {
   FILE *in_handle;
-
+	
+	TRACE("filebuf: Opening file: " << fn << " Mode: " << mode);
   if( !(in_handle=stdiowrap_fopen(fn, mode)) ) {
     return 0;
   }
@@ -85,6 +91,7 @@ filebuf::open(const char *fn,  std::ios_base::openmode m)
 filebuf*
 filebuf::close()
 {
+	TRACE("filebuf: Closing file");
   if( m_handle > 0 ){
     stdiowrap_fclose(m_handle);
   }
@@ -112,6 +119,7 @@ filebuf::overflow(filebuf::int_type c)
   char*     begin = pbase();
   char*     end   = pptr();
   
+	TRACE("filebuf: overflow");
   // Note, this function may need a lock around it, if you plan on it being
   // called from multiple threads.
 
@@ -138,6 +146,8 @@ filebuf::overflow(filebuf::int_type c)
 filebuf::int_type
 filebuf::sync()
 {
+	TRACE("filebuf: sync");
+
   // Flush out our buffer
   int_type ret = overflow(traits_type::eof());
   
@@ -153,6 +163,8 @@ filebuf::sync()
 filebuf::int_type
 filebuf::underflow()
 {
+	TRACE("filebuf: underflow");
+
   // Get as much as possible
   size_t len = stdiowrap_fread(m_inBuff, 1, BUFF_SIZE, m_handle);
   

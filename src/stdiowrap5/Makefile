@@ -2,7 +2,7 @@ cc=gcc
 CC=g++
 ld=ld
 
-all: demo test stdiowrap.o stdiowrap++.o
+all: demo test stdiowrap.o stdiowrap++.o stdiowrapmock++.o
 
 ## objects
 
@@ -20,8 +20,14 @@ streambufwrap.o: streambufwrap.cpp streambufwrap.h stdiowrap.h Makefile
 stdiowrap.o: stdiowrap.c stdiowrap.h Makefile
 	${cc} -Wall -O2 -c stdiowrap.c -DBACKEND_SHM
 
+stdiowrap_mock.o: stdiowrap_mock.c stdiowrap.h Makefile
+	${cc} -Wall -O2 -c stdiowrap_mock.c -DBACKEND_SHM
+
 stdiowrap++.o: stdiowrap.o filebufwrap.o fstreamwrap.o Makefile
 	${ld} -r stdiowrap.o filebufwrap.o fstreamwrap.o -o stdiowrap++.o
+
+stdiowrapmock++.o: stdiowrap_mock.o filebufwrap.o fstreamwrap.o Makefile
+	${ld} -r stdiowrap_mock.o filebufwrap.o fstreamwrap.o -o stdiowrapmock++.o
 
 ## demostrations
 

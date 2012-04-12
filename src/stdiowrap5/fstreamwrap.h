@@ -47,7 +47,6 @@ class ifstream : public std::istream
   void open(const char *fn, std::ios_base::openmode m = std::ios_base::in);
 	void close();
 
-	std::filebuf *rdbuf() const;
 	bool is_open();
 
   // TODO: wchar functions
@@ -66,7 +65,6 @@ class ofstream : public std::ostream
   void open(const char *fn, std::ios_base::openmode m = std::ios_base::out);
 	void close();
 
-	std::filebuf *rdbuf() const;
 	bool is_open();
 
   // TODO: wchar functions
@@ -85,7 +83,6 @@ class fstream : public std::iostream
   void open(const char *fn, std::ios_base::openmode m = (std::ios_base::in | std::ios_base::out));
 	void close();
 
-	std::filebuf *rdbuf() const;
 	bool is_open();
 
   // TODO: wchar functions
