@@ -186,12 +186,12 @@ static WFILE* new_WFILE(const char *fn)
 	// Map filename to proper SHM name
 	char *name;
 	char  buf[32];
-	if( !strcmp(fn,":DB:") ) {
+	if( !strncmp(fn,":DB:", 4) ) {
 		name = getenv("MCW_DB_FULL_PATH");
-	} else if( !strcmp(fn,":IN:") ) {
+	} else if( !strncmp(fn,":IN:", 4) ) {
 		sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
 		name = buf;
-	} else if( !strcmp(fn,":OUT:") ) {
+	} else if( !strncmp(fn,":OUT:", 5) ) {
 		sprintf(buf,":STDOUT%d",atoi(getenv("MCW_WID"))*2+1);
 		name = buf;
 	} else { 
