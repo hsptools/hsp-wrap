@@ -620,7 +620,7 @@ static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int rndx)
 	log_max = (fs->size > 32) ? 32 : fs->size;
 	for( i=0; i<log_max; ++i) {
 		if( fs->shm[i] == '\n' || fs->shm[i] == '\r' ) {
-			break;	
+			log_id[i] = ' ';
 		}
 		else {
 			log_id[i] = fs->shm[i];

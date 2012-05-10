@@ -4,24 +4,19 @@
 
 #include "fstreamwrap.h"
 
-#define DEBUG 0
-#ifdef DEBUG
-#define TRACE(x) std::cerr << (x) << std::endl;
-#endif
-
 namespace stdiowrap {
 
 ifstream::ifstream()
 : std::istream(), buf()
 {
-	this->rdbuf(&buf);
+	rdbuf(&buf);
 }
 
 ifstream::ifstream(const char *fn, std::ios_base::openmode m)
 : std::istream(), buf()
 {
-	this->rdbuf(&buf);
-	this->open(fn, m);
+	rdbuf(&buf);
+	open(fn, m);
 }
 
 void
@@ -46,28 +41,24 @@ ifstream::is_open() {
 ofstream::ofstream()
 : std::ostream(), buf()
 {
-	this->rdbuf(&buf);
-	TRACE("ofstream: Constructing ofstream (default)");
+	rdbuf(&buf);
 }
 
 ofstream::ofstream(const char *fn, std::ios_base::openmode m)
 : std::ostream(), buf()
 {
-	TRACE("ofstream: Constructing ofstream (with file)");
-	this->rdbuf(&buf);
-	this->open(fn, m);
+	rdbuf(&buf);
+	open(fn, m);
 }
 
 void
 ofstream::open(const char *fn, std::ios_base::openmode m) {
-	TRACE("ofstream: Opening file");
 	buf.open(fn, m);
 	// TODO: set failbit
 }
 
 void
 ofstream::close() {
-	TRACE("ofstream: Closing file");
 	buf.close();
 	// TODO: set failbit
 }
@@ -82,14 +73,14 @@ ofstream::is_open() {
 fstream::fstream()
 : std::iostream(), buf()
 {
-	this->rdbuf(&buf);
+	rdbuf(&buf);
 }
 
 fstream::fstream(const char *fn, std::ios_base::openmode m)
 : std::iostream(), buf()
 {
-	this->rdbuf(&buf);
-	this->open(fn, m);
+	rdbuf(&buf);
+	open(fn, m);
 }
 
 void

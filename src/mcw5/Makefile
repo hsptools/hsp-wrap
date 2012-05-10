@@ -11,7 +11,7 @@ LIBS=   -lm -lz -lexpat
 
 # debug build
 #DBG_CC= /usr/mpi/gcc/openmpi-1.4.2-qlc/bin/mpicc
-DBG_CC= mpicc
+DBG_CC= cc
 DBG_CXX= CC
 DBG_OPTS=   
 DBG_CFLAGS= -g -Wall
