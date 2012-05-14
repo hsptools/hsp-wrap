@@ -836,7 +836,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   // Free the now unneeded argv array
   Worker_FreeArgv(argv);
 */
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  //pthread_mutex_unlock(&(SlaveInfo.fork_lock));
 
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
@@ -859,7 +859,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   sprintf(exe_name,"./%s",args.exe_base);
 
   // Lock until child process signals us with SIGUSR1
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  //pthread_mutex_lock(&(SlaveInfo.fork_lock));
   if( (pid=fork()) > 0 ) {
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);

@@ -197,7 +197,6 @@ static WFILE* new_WFILE(const char *fn)
 	} else { 
 		name = fn;
 	}
-	printf(stderr,"stdiowrap: Opening file %s for worker %s\n", name, getenv("MCW_WID"));
 	
   // Malloc a new WFILE
   if( !(wf=malloc(sizeof(WFILE))) ) {
