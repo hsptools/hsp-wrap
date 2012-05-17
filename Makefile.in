@@ -17,19 +17,19 @@ mcw:
 	$(MAKE) -C $(MCW_DIR)
 
 ncbi: stdiowrap
-	$(MAKE) -C $(NCBI_DIR)
+	if test -d $(NCBI_DIR); then $(MAKE) -C $(NCBI_DIR); fi
 
 hmmer: stdiowrap
-	$(MAKE) -C $(HMMER_DIR)
+	if test -d $(HMMER_DIR); then $(MAKE) -C $(HMMER_DIR); fi
 
 tools:
-	$(MAKE) -C $(TOOLS_DIR)
+	if test -d $(TOOLS_DIR); then $(MAKE) -C $(TOOLS_DIR); fi
 
 clean:
 	$(MAKE) -C $(STDIOWRAP_DIR) clean
-	$(MAKE) -C $(MCW_DIR) clean
-	$(MAKE) -C $(NCBI_DIR) clean
-	$(MAKE) -C $(HMMER_DIR) clean
+	if test -d $(MCW_DIR); then $(MAKE) -C $(MCW_DIR) clean; fi
+	if test -d $(NCBI_DIR); then $(MAKE) -C $(NCBI_DIR) clean; fi
+	if test -d $(HMMER_DIR); then $(MAKE) -C $(HMMER_DIR) clean; fi
 	rm -rf target
 
 install: install-mcw install-ncbi install-tools
