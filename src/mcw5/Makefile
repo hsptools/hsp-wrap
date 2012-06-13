@@ -128,8 +128,8 @@ SHMclean: SHMclean.o Makefile
 
 ##
 
-recover: recover.cc Makefile
-	$(CXX) $(OPTS) $(CFLAGS) $(LIBS) recover.cc -o recover
+recoverfasta: recoverfasta.cc Makefile
+	$(CXX) $(OPTS) $(CFLAGS) $(LIBS) recoverfasta.cc -o recoverfasta
 
 ##
 
