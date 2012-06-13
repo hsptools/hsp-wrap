@@ -26,7 +26,7 @@ char *equery; // End of queries
 ////////////////////////////////////////////////////////////////////////////////
 
 // Like strcmp, but respects some custom bounds
-static int seqcmp(char *s, char *m)
+static int seqcmp(const char *s, const char *m)
 {
 	while(s < equery) {
 		if( !(*m) ) {
