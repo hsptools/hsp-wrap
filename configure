@@ -30,7 +30,9 @@ done
 sed "s:%PREFIX%:$PREFIX:g" Makefile.in > Makefile
 
 # Configure HMMER
-pushd .
-cd src/hmmer-3.0
-./configure
-popd
+if [ -d "$DIRECTORY" ]; then
+	pushd .
+	cd src/hmmer-3.0
+	./configure
+	popd
+fi
