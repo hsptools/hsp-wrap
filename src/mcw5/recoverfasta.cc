@@ -30,7 +30,7 @@ static int sequence_length(char *seq)
   char *p, *lp;
 
 	// Verify input
-	if (seq >= nfo.equery) {
+	if (seq >= equery) {
 		return 0;
 	}
 
