@@ -616,6 +616,7 @@ static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int rndx)
 	filesize_t     *fs;
 
 	// Form an "ID" for logging this sequence.
+	// TODO: Util function shared with recovery scripts
 	fs      = &(file_sizes->fs[qndx]);
 	log_max = (fs->size > 32) ? 32 : fs->size;
 	for( i=0; i<log_max; ++i) {

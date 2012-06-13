@@ -131,6 +131,9 @@ SHMclean: SHMclean.o Makefile
 recoverfasta: recoverfasta.cc Makefile
 	$(CXX) $(OPTS) $(CFLAGS) $(LIBS) recoverfasta.cc -o recoverfasta
 
+recovermol2: recovermol2.cc Makefile
+	$(CXX) $(OPTS) $(CFLAGS) $(LIBS) recovermol2.cc -o recovermol2
+
 ##
 
 tscq.o: tscq.c tscq.h Makefile
