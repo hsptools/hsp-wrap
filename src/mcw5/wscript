@@ -29,8 +29,9 @@ def build(bld):
 
     # MCW stuff
     bld.stlib(source='tscq.c', target='tscq')
-    
-    #TODO: Needs MPI
-    #bld.program(source='mcw.c', target='mcw', use='ZLIB tscq')
-    #bld.program(source='SHMclean.c', target='SHMclean')
-    #bld.program(source='wrap.c', target='wrap')
+
+    # MPI apps
+    mpienv = bld.all_envs['mpicc']
+    bld.program(source='mcw.c', target='mcw', use='ZLIB tscq', env=mpienv)
+    bld.program(source='SHMclean.c', target='SHMclean', env=mpienv)
+    bld.program(source='wrap.c', target='wrap', env=mpienv)
