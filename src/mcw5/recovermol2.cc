@@ -177,6 +177,7 @@ int main(int argc, char **argv) {
 	// Open output files
 	ofstream of_resume("recovery-resume.mol2");
 	ofstream of_failed("recovery-failed.mol2");
+	ofstream of_successful("recovery-successful.mol2");
 
 	// Query file is mapped; setup pointers to iterate through the sequences
 	cquery = queries;
@@ -204,7 +205,9 @@ int main(int argc, char **argv) {
 
 		i = success.find(log_id);
 		if (i != success.end()) {
-			// Successful, remove from list of outstanding sequences
+			// Successful, optionally print to successful file
+			of_successful.write(seq, sequence_length(seq));
+			// ... and remove from list of outstanding sequences
 			success.erase(i);
 			++nsuccess;
 		}
@@ -232,6 +235,7 @@ int main(int argc, char **argv) {
 
 	of_resume.close();
 	of_failed.close();
+	of_successful.close();
 
 	cout << endl;
 	return 0;
