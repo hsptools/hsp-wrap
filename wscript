@@ -31,16 +31,20 @@ def configure(conf):
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)
 
     # zlib
-    conf.check_cfg(package='zlib', atleast_version='1.2.3',
-            args=['--cflags', '--libs'])
+    try:
+        conf.check_cfg(package='zlib', atleast_version='1.2.3',
+                args=['--cflags', '--libs'])
+    except:
+        conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
+                uselib_store='ZLIB', msg="Checking for any 'zlib'")
 
     # std Math
-    conf.check_cc(lib=['m'], uselib_store='M',
-            msg="Checking for 'libm' (math library)")
+    conf.check_cc(lib='m', header_name='math.h', function_name='sinf',
+            uselib_store='M', msg="Checking for 'libm' (math library)")
 
     # libexpat1
-    conf.check_cc(lib='expat', header_name='expat.h', uselib_store='EXPAT',
-            msg="Checking for 'Expat'")
+    conf.check_cc(lib='expat', header_name='expat.h', function_name='XML_ParserCreate',
+            uselib_store='EXPAT', msg="Checking for 'Expat'")
 
     # MySQL
     if mysql_config:
