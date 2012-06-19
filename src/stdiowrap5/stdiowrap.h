@@ -86,7 +86,7 @@ typedef struct {
   size_t         size;    // Size of the data segment in memory
   long           tsize;   // Size of the container holding the data segment
   long          *psize;   // Pointer to back-end's size so it can be updated
-  unsigned char *pos;     // Current cursor position in data semgent
+  unsigned char *pos;     // Current cursor position in data segment
 } WFILE;
 
 #ifdef BACKEND_SHM
