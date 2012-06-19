@@ -6,6 +6,10 @@ from waflib import Logs
 
 def build(bld):
 
+    # Libraries
+    bld.stlib(source='tscq.c', target='tscq')
+    bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
+
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
         bld.program(source='%s.c'%t, target=t)
@@ -24,11 +28,9 @@ def build(bld):
             features='cxx cxxprogram')
 
     # Special tools
+    bld.program(source='gather.c', target='gather', use='zutils')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
-    bld.program(source='zextract.c', target='zextract', use='ZLIB')
-
-    # MCW stuff
-    bld.stlib(source='tscq.c', target='tscq')
+    bld.program(source='zextract.c', target='zextract', use='zutils')
 
     # MPI apps
     mpienv = bld.all_envs['mpicc']
