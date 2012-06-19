@@ -60,6 +60,15 @@ def configure(conf):
         # TODO: Move to a summary after the configuration process
         Logs.warn('MySQL library could not be found.  Database related tools will not be built.')
 
+    # nftw from ftw.h (File Tree Walk)
+    conf.env.stash()
+    try:
+        conf.env.DEFINES = ['_XOPEN_SOURCE=500']
+        conf.check_cc(header_name='ftw.h', function_name='nftw',
+                uselib_store='FTW')
+    finally:
+        conf.env.revert()
+
     # Defines
     conf.define('MCW_NCORES', conf.options.num_cores)
     conf.define('HSP_VERSION', VERSION)

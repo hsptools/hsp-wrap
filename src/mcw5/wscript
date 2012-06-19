@@ -9,6 +9,7 @@ def build(bld):
     # Libraries
     bld.stlib(source='tscq.c', target='tscq')
     bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
+    bld.stlib(source='strutils.c', target='strutils')
 
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
@@ -28,7 +29,7 @@ def build(bld):
             features='cxx cxxprogram')
 
     # Special tools
-    bld.program(source='gather.c', target='gather', use='zutils')
+    bld.program(source='gather.c', target='gather', use='zutils strutils')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
     bld.program(source='zextract.c', target='zextract', use='zutils')
 
