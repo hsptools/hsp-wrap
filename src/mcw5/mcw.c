@@ -1533,6 +1533,9 @@ void* ResultWriter(void *arg)
   }
   // !!av: gating hack
   // close(f);
+	
+	// Don't need write exclusion anymore.  Make readable.
+	chmod(fn, S_IRUSR | S_IWUSR | S_IRGRP);
 
   // Record timings
   pthread_mutex_lock(&(SlaveInfo.time_lock));
