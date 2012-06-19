@@ -3,8 +3,8 @@
 import sys, re
 
 def stripped(f):
-	for l in f:
-		yield l.strip()
+    for l in f:
+        yield l.strip()
 
 ####
 
@@ -19,22 +19,22 @@ lnum = 0
 mnum = 0
 
 for l in mol2_in:
-	# New molecule
-	if l.startswith('@<TRIPOS>MOLECULE'):
-		mnum += 1
-		# Last one was a keeper, print it out
-		if keep:
-			print buf
-		# Starting a new buffer
-		buf  = ''
-		keep = False
-		lnum = 0
+    # New molecule
+    if l.startswith('@<TRIPOS>MOLECULE'):
+        mnum += 1
+        # Last one was a keeper, print it out
+        if keep:
+            print buf
+        # Starting a new buffer
+        buf  = ''
+        keep = False
+        lnum = 0
 
-	# Check if keeper
-	if lnum==1 and l.strip() in names:
-		keep = True
+    # Check if keeper
+    if lnum==1 and l.strip() in names:
+        keep = True
 
-	# Append to buffer
-	buf  += l
-	lnum += 1
+    # Append to buffer
+    buf  += l
+    lnum += 1
 
