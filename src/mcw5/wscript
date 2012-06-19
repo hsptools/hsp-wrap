@@ -16,15 +16,15 @@ def build(bld):
         bld.program(source='%s.c'%t, target=t)
 
     bld.program(source='compressfasta.c', target='compressfasta',
-            use='ZLIB', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
+            use='zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
     bld.program(source='compressfasta.c', target='compressfasta0',
-            use='ZLIB', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
+            use='zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
     bld.program(source='recoverfasta.cc', target='recoverfasta',
             features='cxx cxxprogram')
 
     # MOL2 tools
     bld.program(source='splitmol2.c', target='splitmol2')
-    bld.program(source='compressmol2.c', target='compressmol2', use='ZLIB')
+    bld.program(source='compressmol2.c', target='compressmol2', use='zutils')
     bld.program(source='recovermol2.cc', target='recovermol2',
             features='cxx cxxprogram')
 

@@ -10,8 +10,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdint.h>
-#include <zlib.h>
 
+#include "zutils.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 //                              Types and Defines                             //
@@ -146,108 +146,6 @@ static void Init_Sequences(char *fn)
 ////////////////////////////////////////////////////////////////////////////////
 
 
-#define ZCHUNK 16384
-
-// Writes "sz" bytes from "source" to the stream "dest", compressing
-// the data first with zlib compression strength "level".
-//
-// Special thanks to Mark Adler for providing the non-copyrighted
-// public domain example program "zpipe.c", from which this function
-// is based (Version 1.4  December 11th, 2005).
-static void ZCompressWrite(void *source, int sz, FILE *dest, int level)
-{
-  z_stream       strm;
-  unsigned char  in[ZCHUNK],out[ZCHUNK];
-  int            blk,tw=sz;
-  int            rv,flush;
-  unsigned       ndata;
-  long           lenpos,len;
-  
-  // Init zlib state
-  strm.zalloc = Z_NULL;
-  strm.zfree  = Z_NULL;
-  strm.opaque = Z_NULL;
-  rv = deflateInit(&strm, level);
-  if( rv != Z_OK ) {
-    fprintf(stderr,"Failed to init zlib.  Terminating.\n");
-    exit(1);
-  }
-
-  // Write a placeholder long that will eventually hold the 
-  // compressed block size.
-  if( (lenpos=ftell(dest)) < 0 ) {
-    fprintf(stderr,"Failed to find block size pos.  Terminating.\n");
-    exit(1);
-  }
-  len = 0;
-  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
-    fprintf(stderr,"Failed to stub block size.  Terminating.\n");
-    exit(1);
-  }
-
-  // Compress while there is still data to write
-  do {
-    // Setup input
-    blk = ((tw < ZCHUNK)?(tw):(ZCHUNK));
-    memcpy(in, source+(sz-tw), blk);
-    strm.avail_in = blk;
-    strm.next_in  = in;
-    flush = ((!(tw-blk))?(Z_FINISH):(Z_NO_FLUSH));
-    do {
-      // Setup output and compress
-      strm.avail_out = ZCHUNK;
-      strm.next_out  = out;
-      rv = deflate(&strm, flush);
-      if( rv == Z_STREAM_ERROR ) {
-	fprintf(stderr,"Failed to compress output block.  Terminating.\n");
-	exit(1);
-      }
-      // Write compressed data to destination
-      ndata = ZCHUNK - strm.avail_out;
-      if( (fwrite(out, 1, ndata, dest) != ndata) || ferror(dest) ) {
-	deflateEnd(&strm);
-	fprintf(stderr,"Failed to compress output block.  Terminating.\n");
-	exit(1);
-      }
-      len += ndata;
-    } while( strm.avail_out == 0 );
-    // Sanity check
-    if( strm.avail_in != 0 ) {
-      fprintf(stderr,"Did not fully compress block.  Terminating.\n");
-      exit(1);
-    }
-    // Update "to write" count
-    tw -= blk;
-  } while( flush != Z_FINISH );
-
-  // Another sanity check
-  if( rv != Z_STREAM_END ) {
-    fprintf(stderr,"Didn't finish compression properly.  Terminating.\n");	   
-    exit(1);
-  }
-
-  // Cleanup
-  deflateEnd(&strm);
-
-  // Now that the compressed data is written, write the
-  // size of the compressed block at the front of the block
-  if( fseek(dest,lenpos,SEEK_SET) ) {
-    fprintf(stderr,"Could not seek to len pos.  Terminating.\n");
-    exit(1);
-  }
-  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
-    fprintf(stderr,"Failed to write len.  Terminating.\n");
-    exit(1);
-  }
-  //fprintf(stderr,"insz:\t%d\ncmpzsz:\t %ld\n",sz,len);
-  if( fseek(dest,0,SEEK_END) ) {
-    fprintf(stderr,"Could not seek to end.  Terminating.\n");
-    exit(1);
-  }
-
-}
-
-
 int main(int argc, char **argv)
 {
   char   *seq;
@@ -303,7 +201,7 @@ int main(int argc, char **argv)
     // I happen to know that "seq=Get_Sequence()" will always be contiguous
     // non-terminated sequences when called in succsession like above.
     if( sz ) {
-      ZCompressWrite(nfo.sequences[0], sz, f, Z_DEFAULT_COMPRESSION);
+      zutil_compress_write(f, nfo.sequences[0], sz, Z_DEFAULT_COMPRESSION);
     }
 
     // Get ready for the next block

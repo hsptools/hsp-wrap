@@ -28,12 +28,6 @@
 
 #define CHUNK 16384
 
-/* Decompress from file source to file dest until stream ends or EOF.
-   inf() returns Z_OK on success, Z_MEM_ERROR if memory could not be
-   allocated for processing, Z_DATA_ERROR if the deflate data is
-   invalid or incomplete, Z_VERSION_ERROR if the version of zlib.h and
-   the version of the library linked do not match, or Z_ERRNO if there
-   is an error reading or writing the files. */
 int
 zutil_inf(FILE *dest, FILE *source, int *blks) {
   int ret;
@@ -121,3 +115,103 @@ zutil_inf(FILE *dest, FILE *source, int *blks) {
 
   return ret == Z_STREAM_END ? Z_OK : Z_DATA_ERROR;
 }
+
+
+
+// TODO: Replace error messages with status codes.
+// TODO: Replace exit() with return()
+// TODO: Add utility function for status code to string
+void
+zutil_compress_write(FILE *dest, void *source, int sz, int level) {
+  z_stream       strm;
+  unsigned char  in[CHUNK],out[CHUNK];
+  int            blk,tw=sz;
+  int            rv,flush;
+  unsigned       ndata;
+  long           lenpos,len;
+  
+  // Init zlib state
+  strm.zalloc = Z_NULL;
+  strm.zfree  = Z_NULL;
+  strm.opaque = Z_NULL;
+  rv = deflateInit(&strm, level);
+  if( rv != Z_OK ) {
+    fprintf(stderr,"Failed to init zlib.  Terminating.\n");
+    exit(1);
+  }
+
+  // Write a placeholder long that will eventually hold the 
+  // compressed block size.
+  if( (lenpos=ftell(dest)) < 0 ) {
+    fprintf(stderr,"Failed to find block size pos.  Terminating.\n");
+    exit(1);
+  }
+  len = 0;
+  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
+    fprintf(stderr,"Failed to stub block size.  Terminating.\n");
+    exit(1);
+  }
+
+  // Compress while there is still data to write
+  do {
+    // Setup input
+    blk = ((tw < CHUNK)?(tw):(CHUNK));
+    memcpy(in, source+(sz-tw), blk);
+    strm.avail_in = blk;
+    strm.next_in  = in;
+    flush = ((!(tw-blk))?(Z_FINISH):(Z_NO_FLUSH));
+    do {
+      // Setup output and compress
+      strm.avail_out = CHUNK;
+      strm.next_out  = out;
+      rv = deflate(&strm, flush);
+      if( rv == Z_STREAM_ERROR ) {
+        fprintf(stderr,"Failed to compress output block.  Terminating.\n");
+        exit(1);
+      }
+      // Write compressed data to destination
+      ndata = CHUNK - strm.avail_out;
+      if( (fwrite(out, 1, ndata, dest) != ndata) || ferror(dest) ) {
+        deflateEnd(&strm);
+        fprintf(stderr,"Failed to compress output block.  Terminating.\n");
+        exit(1);
+      }
+      len += ndata;
+    } while( strm.avail_out == 0 );
+    // Sanity check
+    if( strm.avail_in != 0 ) {
+      fprintf(stderr,"Did not fully compress block.  Terminating.\n");
+      exit(1);
+    }
+    // Update "to write" count
+    tw -= blk;
+  } while( flush != Z_FINISH );
+
+  // Another sanity check
+  if( rv != Z_STREAM_END ) {
+    fprintf(stderr,"Didn't finish compression properly.  Terminating.\n");
+    exit(1);
+  }
+
+  // Cleanup
+  deflateEnd(&strm);
+
+  // Now that the compressed data is written, write the
+  // size of the compressed block at the front of the block
+  if( fseek(dest,lenpos,SEEK_SET) ) {
+    fprintf(stderr,"Could not seek to len pos.  Terminating.\n");
+    exit(1);
+  }
+  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
+    fprintf(stderr,"Failed to write len.  Terminating.\n");
+    exit(1);
+  }
+  //fprintf(stderr,"insz:\t%d\ncmpzsz:\t %ld\n",sz,len);
+  if( fseek(dest,0,SEEK_END) ) {
+    fprintf(stderr,"Could not seek to end.  Terminating.\n");
+    exit(1);
+  }
+
+}
+
+
