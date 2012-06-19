@@ -19,6 +19,7 @@ def options(opt):
     opt.load('compiler_mpi_c', tooldir=tool_dir)
 
     opt.add_option('--debug', action='store_true', help='Build programs with debug flags enabled')
+    opt.add_option('--num-cores', action='store', type='int', default=12, help='Number of cores to utilize in wrapper')
 
 def configure(conf):
     conf.load('compiler_c compiler_cxx')
@@ -36,15 +37,18 @@ def configure(conf):
                 args=['--cflags', '--libs'])
     except:
         conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
-                uselib_store='ZLIB', msg="Checking for any 'zlib'")
+                uselib_store='ZLIB', define_name='HAVE_ZLIB',
+                msg="Checking for any 'zlib'")
 
     # std Math
     conf.check_cc(lib='m', header_name='math.h', function_name='sinf',
-            uselib_store='M', msg="Checking for 'libm' (math library)")
+            uselib_store='M', define_name='HAVE_MATH',
+            msg="Checking for 'libm' (math library)")
 
     # libexpat1
     conf.check_cc(lib='expat', header_name='expat.h', function_name='XML_ParserCreate',
-            uselib_store='EXPAT', msg="Checking for 'Expat'")
+            uselib_store='EXPAT', define_name='HAVE_EXPAT',
+            msg="Checking for 'Expat'")
 
     # MySQL
     if mysql_config:
@@ -56,7 +60,10 @@ def configure(conf):
         # TODO: Move to a summary after the configuration process
         Logs.warn('MySQL library could not be found.  Database related tools will not be built.')
 
-    conf.write_config_header('src/config.h')
+    # Defines
+    conf.define('MCW_NCORES', conf.options.num_cores)
+    conf.define('HSP_VERSION', VERSION)
+    conf.write_config_header('hsp-config.h')
 
 def build(bld):
     bld.recurse('src')

@@ -1,20 +1,16 @@
 #ifndef MCW_H
 #define MCW_H
 
+#include "hsp-config.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 //                                 Settings                                   //
 ////////////////////////////////////////////////////////////////////////////////
 
-
-// Number of cores/threads to utilize
-#define NCORES  (12)
-
-
 // Size of the I/O buffers
 #define QUERYBUFF_SIZE      (2L<<20)                            // 2   MiB
 #define RESULTBUFF_SIZE     (1L<<27)                            // 128 MiB
-#define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*NCORES)
+#define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*MCW_NCORES)
 #define RESULTBUFF_SHM_SIZE (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
 
 
@@ -175,7 +171,7 @@ typedef struct st_slaveinfo {
   tscq_t          *rq;              // Request queue
   volatile int     worker_error;    // Error flag for worker threads
   pthread_t        listener; 				// Listener for Master-Commands
-  pthread_t        workers[NCORES]; // Array of handles to worker threads
+  pthread_t        workers[MCW_NCORES]; // Array of handles to worker threads
   pthread_mutex_t  resultb_lock;    // Lock for the result buffer
   pthread_cond_t   resultb_nfull;   // Condition for not full
   pthread_cond_t   resultb_nempty;  // Condition for not empty

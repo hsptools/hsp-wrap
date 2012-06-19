@@ -106,25 +106,25 @@ static void Report_Timings(int rank,
     // Root uses an empty input (t) and fills (v)
     MPI_Reduce(t, v, 10, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
     Vprint(SEV_NRML,"Real input time:           %.3f  (per thread: %.3f).\n",
-	   v[0],(v[0]/(MasterInfo.nslaves*NCORES)));
+	   v[0],(v[0]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Real output time:          %.3f  (per thread: %.3f).\n",
-	   v[1],(v[1]/(MasterInfo.nslaves*NCORES)));
+	   v[1],(v[1]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Input decompression time:  %.3f  (per thread: %.3f).\n",
-	   v[2],(v[2]/(MasterInfo.nslaves*NCORES)));
+	   v[2],(v[2]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Output compression time:   %.3f  (per thread: %.3f).\n",
- 	   v[3],(v[3]/(MasterInfo.nslaves*NCORES)));
+ 	   v[3],(v[3]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Virtual input time:        %.3f  (per thread: %.3f).\n",
-	   v[4],(v[4]/(MasterInfo.nslaves*NCORES)));
+	   v[4],(v[4]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Virtual output time:       %.3f  (per thread: %.3f).\n",
-	   v[5],(v[5]/(MasterInfo.nslaves*NCORES)));
+	   v[5],(v[5]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Compressed input:          %.3f  (per thread: %.3f).\n",
-	   v[6],(v[6]/(MasterInfo.nslaves*NCORES)));
+	   v[6],(v[6]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Decompressed input:        %.3f  (per thread: %.3f).\n",
-	   v[7],(v[7]/(MasterInfo.nslaves*NCORES)));
+	   v[7],(v[7]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Uncompressed output:       %.3f  (per thread: %.3f).\n",
-	   v[8],(v[8]/(MasterInfo.nslaves*NCORES)));
+	   v[8],(v[8]/(MasterInfo.nslaves*MCW_NCORES)));
     Vprint(SEV_NRML,"Compressed output:         %.3f  (per thread: %.3f).\n\n",
-	   v[9],(v[9]/(MasterInfo.nslaves*NCORES)));
+	   v[9],(v[9]/(MasterInfo.nslaves*MCW_NCORES)));
     fflush(stderr);
     fflush(stdout);
     MPI_Barrier(MPI_COMM_WORLD);
@@ -422,10 +422,10 @@ static void Master(int processes, int rank)
   mi->nprocs  = processes;
   mi->nslaves = processes-1;
   Vprint(SEV_NRML,"Slaves:   %d\t(processes)\n",mi->nslaves);
-  Vprint(SEV_NRML,"Workers:  %d\t(threads)\n\n",mi->nslaves*NCORES);
+  Vprint(SEV_NRML,"Workers:  %d\t(threads)\n\n",mi->nslaves*MCW_NCORES);
   Init_Master(&mi);
 
-	max_req = ceil((float)mi->nqueries/(mi->nslaves*NCORES));
+	max_req = ceil((float)mi->nqueries/(mi->nslaves*MCW_NCORES));
 
   // Wait for all the ranks to fully init
   MPI_Barrier(MPI_COMM_WORLD);
@@ -1130,15 +1130,15 @@ void Start_Workers()
   int             i;
 
   // Setup queues with which to interact with worker threads
-  SlaveInfo.rq = tscq_new(1024*NCORES,sizeof(request_t));
-  SlaveInfo.wq = tscq_new(1024*NCORES,sizeof(workunit_t));
+  SlaveInfo.rq = tscq_new(1024*MCW_NCORES,sizeof(request_t));
+  SlaveInfo.wq = tscq_new(1024*MCW_NCORES,sizeof(workunit_t));
 
   // Setup worker thread properties
   pthread_attr_init(&attr);
   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
 
   // Start worker threads
-  for(i=0; i<NCORES; i++) {
+  for(i=0; i<MCW_NCORES; i++) {
     int err = pthread_create(&(SlaveInfo.workers[i]), &attr, Worker, (void*)((long)i));
     if (err) {
       Vprint(SEV_ERROR,"Slave failed to start worker thread. %s. Terminating.\n", strerror(err));
@@ -1761,7 +1761,7 @@ static void Slave(int processes, int rank)
     if( qd > 0 ) {
       // We already put a at least one "extra" work unit on the work queue.
       qd--;
-      if( qd >= NCORES ) {
+      if( qd >= MCW_NCORES ) {
         // If the number of queued work units is more than
         // the number of cores, we won't request more work
         // from the master.  Else, we will get more work.
@@ -1775,7 +1775,7 @@ static void Slave(int processes, int rank)
     // Request a work unit from the master
     Vprint(SEV_DEBUG,"Slave %d asking for more work from master (qd:%d).\n",
            SlaveInfo.rank,qd);
-    request->count = NCORES-qd;
+    request->count = MCW_NCORES-qd;
     MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
              TAG_REQUEST, MPI_COMM_WORLD);
     tscq_entry_free(si->rq,request);
@@ -1791,7 +1791,7 @@ static void Slave(int processes, int rank)
       // Master has told us we are done; send this to workers
       Vprint(SEV_DEBUG,"Slave %d told to exit by master.\n",SlaveInfo.rank);
       tscq_entry_free(si->wq,workunit);
-      for(i=0; i<NCORES; i++) {
+      for(i=0; i<MCW_NCORES; i++) {
         workunit = tscq_entry_new(si->wq);
         memset(workunit,0,sizeof(workunit_t));
         workunit->type = WU_TYPE_EXIT;
@@ -1800,7 +1800,7 @@ static void Slave(int processes, int rank)
 
       // Wait for the worker threads to exit
       Vprint(SEV_DEBUG,"Slave %d waiting for workers to finish.\n",SlaveInfo.rank);
-      for(i=0; i<NCORES; i++) {
+      for(i=0; i<MCW_NCORES; i++) {
         pthread_join(SlaveInfo.workers[i], NULL);
       }
 
@@ -2001,7 +2001,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the two in/out SHMs per core
-      for(i=0; i<NCORES; i++) {
+      for(i=0; i<MCW_NCORES; i++) {
         sprintf(name,":STDIN%d",i*2);
         Create_DBSHM(name,QUERYBUFF_SIZE);
         sprintf(name,":STDOUT%d",i*2+1);
@@ -2064,7 +2064,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the two in/out SHMs per core
-      for(i=0; i<NCORES; i++) {
+      for(i=0; i<MCW_NCORES; i++) {
         sprintf(name,":STDIN%d",i*2);
         Create_DBSHM(name,QUERYBUFF_SIZE);
         sprintf(name,":STDOUT%d",i*2+1);
@@ -2116,7 +2116,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
     file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
     memset(file_sizes,0,sizeof(filesizes_t));
     // Create the two in/out SHMs per core
-    for(i=0; i<NCORES; i++) {
+    for(i=0; i<MCW_NCORES; i++) {
       sprintf(name,":STDIN%d",i*2);
       Create_DBSHM(name,QUERYBUFF_SIZE);
       sprintf(name,":STDOUT%d",i*2+1);
