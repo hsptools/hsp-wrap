@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include "stdiowrap.h"
 
@@ -12,6 +14,8 @@ int main(int argc, char **argv)
   int   rd;
   long  start;
 
+	/* Let parent (mcw) process know we are merrily running */
+	kill(getppid(), SIGUSR1);
   
   // Check command line
   if( argc != 2 ) {
@@ -26,26 +30,36 @@ int main(int argc, char **argv)
   }
 
   // Record start
+	printf("ftell\n");
   start = stdiowrap_ftell(f);
+	printf("  done.\n");
 
   // Read input file and dump to stdout
+	printf("fread");
   while( (rd=stdiowrap_fread(buf,1,sizeof(buf)-1,f)) == sizeof(buf)-1 ) {
+		printf(".");
     buf[sizeof(buf)-1] = '\0';
     printf("%s", buf);
   }
+	printf("\n  done.\n");
   if( rd ) {
     buf[rd] = '\0';
     printf("%s", buf);
   }
   
   // Rewind the file
+	printf("fseek\n");
   stdiowrap_fseek(f,start,SEEK_SET);
+	printf("  done.\n");
 
   // Read input file and dump to stdout (again)
+	printf("fread");
   while( (rd=stdiowrap_fread(buf,1,sizeof(buf)-1,f)) == sizeof(buf)-1 ) {
+		printf(".");
     buf[sizeof(buf)-1] = '\0';
     printf("%s", buf);
   }
+	printf("\n  done.\n");
   if( rd ) {
     buf[rd] = '\0';
     printf("%s", buf);
