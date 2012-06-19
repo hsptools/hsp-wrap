@@ -1,0 +1,45 @@
+#!/bin/bash
+
+BINDIR=$MCWDIR/bin
+NARGS=1
+
+# Correct arg count
+if [ $# -eq $NARGS ]; then
+
+    # Directory exists?
+    if [ -d $1 ]; then
+
+        # Do it
+        for f in $1/*/*/*.stdout; do
+            chmod +r $f
+            $BINDIR/zextract $f
+            echo ""
+        done
+        exit
+
+    else
+
+        echo "Directory doesn't exist." >&2
+        echo "Argument must be an existing output directory." >&2
+
+    fi
+elif [ $# -lt $NARGS ]; then
+
+    echo "Too few arguments, $NARGS required" >&2
+
+else
+
+    echo "Too many arguments, $NARGS required" >&2
+
+fi
+
+## Usage
+
+echo "" >&2
+echo "Usage: gather DIR" >&2
+echo "" >&2
+echo "Gather and decompress all results in mcw job output " >&2
+echo "directory, DIR, and output the results to standard output." >&2
+echo "" >&2
+echo "Example: gather job-foo > foo.results" >&2
+
