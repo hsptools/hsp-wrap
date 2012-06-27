@@ -1,6 +1,5 @@
 .*.sw?
 *.pyc
-/Makefile
 /.waf-*
 /build
 /target
