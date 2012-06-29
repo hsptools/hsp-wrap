@@ -40,11 +40,12 @@ typedef struct st_args {
   char *exe_base;        // argv[0] of child process
   char *db_path;         // Path to DBs
   char *db_prefix;       // Path to DBs
-  char *db_files;        // Files in the DB
+  char *db_files;        // Filenames in the DB
   int   ndbs;            // Number of DBs to use
   int   wum;             // Work unit count multiplier
   char *mode;            // Blastall mode (e.g. blastp)
   char *queryf;          // Query file
+  char *out_files;       // Expect output Filenames
   char *dup2;            // FD mappings for child
   long  time_limit;      // Runtime limit
   char *job_name;        // User-specified name for the run
@@ -75,7 +76,7 @@ typedef struct {
 
 // Tag for send/recv work units and sequence data
 #define TAG_WORKUNIT	0
-#define TAG_SEQDATA		1
+#define TAG_SEQDATA	1
 #define TAG_MASTERCMD	2
 
 
@@ -168,10 +169,12 @@ typedef struct st_slaveinfo {
   int              nprocs;          // Total number of processes
   int              rank;            // Rank of this slave
   volatile int     done;            // Exit flag for the slave
+  char           **out_files;       // Output (result) filenames
+  int              nout_files;      // Number of output files
   tscq_t          *wq;              // Work queue
   tscq_t          *rq;              // Request queue
   volatile int     worker_error;    // Error flag for worker threads
-  pthread_t        listener; 				// Listener for Master-Commands
+  pthread_t        listener;        // Listener for Master-Commands
   pthread_t        workers[MCW_NCORES]; // Array of handles to worker threads
   pthread_mutex_t  resultb_lock;    // Lock for the result buffer
   pthread_cond_t   resultb_nfull;   // Condition for not full
@@ -188,8 +191,10 @@ typedef struct st_slaveinfo {
   unsigned long    b_o;             // Output (compressed) byte size
   unsigned long    b_id;            // Input (decompressed) byte size
   unsigned long    b_od;            // Output (uncompressed) byte size
-	FILE						*log;							// Log file descriptor
+  FILE            *log;             // Log file descriptor
 } slaveinfo_t;
 
 
 #endif
+
+// vim: ts=8:sts=2:sw=2

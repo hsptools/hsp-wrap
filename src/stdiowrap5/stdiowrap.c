@@ -181,22 +181,38 @@ static void free_WFILE_data_SHM(WFILE *wf)
 static WFILE* new_WFILE(const char *fn)
 {
   WFILE *wf;
-  int    rv;
+  char  *saveptr, *files, *n, *name=NULL;
+  char   buf[32];
+  int    rv, i;
 
-	// Map filename to proper SHM name
-	char *name;
-	char  buf[32];
-	if( !strncmp(fn,":DB:", 4) ) {
-		name = getenv("MCW_DB_FULL_PATH");
-	} else if( !strncmp(fn,":IN:", 4) ) {
-		sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
-		name = buf;
-	} else if( !strncmp(fn,":OUT:", 5) ) {
-		sprintf(buf,":STDOUT%d",atoi(getenv("MCW_WID"))*2+1);
-		name = buf;
-	} else { 
-		name = fn;
-	}
+  // Map filename to proper SHM name
+  if( !strncmp(fn,":DB:", 4) ) {
+    name = getenv("MCW_DB_FULL_PATH");
+  } else if( !strncmp(fn, ":IN:", 4) ) {
+    sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
+    name = buf;
+  } else {
+    // Looking for filename in mapped outputs
+    // TODO: Cache list
+    files = strdup(getenv("MCW_O_FILES"));
+    for( n = strtok_r(files, ":", &saveptr), i = 0;
+	 n;
+	 n = strtok_r(NULL, ":", &saveptr), ++i ) {
+
+      // Match (fn is output file)
+      if( !strcmp(n, fn) ) {
+	sprintf(buf,":STDOUT%d:%d",atoi(getenv("MCW_WID"))*2+1, i);
+	name = buf;
+	break;
+      }
+    }
+    free(files);
+  }
+
+  // Config files, etc. ?
+  if (!name) {
+    name = fn;
+  }
 	
   // Malloc a new WFILE
   if( !(wf=malloc(sizeof(WFILE))) ) {

@@ -22,4 +22,11 @@ str_ends_with(const char *str, const char *suffix) {
   return !strncmp(str + lstr - lsuffix, suffix, lsuffix);
 }
 
+int
+str_cnt_chr(const char *str, char chr) {
+  int i;
+  for( i = 0; str[i]; str[i] == chr ? ++i : ++str );
+  return i;
+}
+
 #endif

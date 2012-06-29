@@ -576,26 +576,65 @@ static void Master_Flush()
 ////////////////////////////////////////////////////////////////////////////////
 
 
-static void Worker_WriteResults(char *data, int n, int wid)
+static int Worker_IsEnoughSpaceAvail()
 {
+  int n;
+
+  for( n=0; n<SlaveInfo.nout_files; ++n ) {
+    if( RESULTBUFF_GBL_SIZE - resultbuff[n].count < RESULTBUFF_SIZE ) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int Writer_IsDataAvailable()
+{
+  int n;
+
+  for( n=0; n<SlaveInfo.nout_files; ++n ) {
+    if( resultbuff[n].count ) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+
+static void Worker_WriteResults(int *rndxs, int wid)
+{
+  filesize_t     *fs;
+  int n;
+
+  // Check result buffers for data
+  for( n=0; n<SlaveInfo.nout_files; ++n ) {
+    if( file_sizes->fs[rndxs[n]].size ) {
+      break;
+    }
+  }
   // Skip if no data
-  if( !n ) {
+  if( n==SlaveInfo.nout_files ) {
     return;
   }
-  
+
   // Lock and wait for "not full" status
   Vprint(SEV_DEBUG,"Slave %d Worker %d about to write results to buffer.\n",
          SlaveInfo.rank,wid);
   pthread_mutex_lock(&(SlaveInfo.resultb_lock));
-  while( (RESULTBUFF_GBL_SIZE-resultbuff->count) < RESULTBUFF_SIZE ) {
+  
+  // Wait while remaining space is less then worst possible local result buffer
+  while( !Worker_IsEnoughSpaceAvail() ) {
     Vprint(SEV_DEBUG,"Slave %d Worker %d waiting for room to write results to buffer.\n",
-           SlaveInfo.rank,wid);
+	   SlaveInfo.rank,wid);
     pthread_cond_wait(&(SlaveInfo.resultb_nfull), &(SlaveInfo.resultb_lock));
   }
 
-  // Write into result shm
-  memcpy((void*)(resultbuff->buff+resultbuff->count), data, n);
-  resultbuff->count += n;
+  // Write into result shms
+  for( n=0; n<SlaveInfo.nout_files; ++n ) {
+    fs = &(file_sizes->fs[rndxs[n]]);
+    memcpy((void*)(resultbuff[n].buff+resultbuff[n].count), fs->shm, fs->size);
+    resultbuff[n].count += fs->size;
+  }
 
   // Signal that the buffer is not empty
   pthread_cond_signal(&(SlaveInfo.resultb_nempty));
@@ -607,27 +646,27 @@ static void Worker_WriteResults(char *data, int n, int wid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int rndx)
+static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int *rndxs)
 {
   struct timeval  st,et;
   int             status,w,i;
   float           io_time=0.0f;
-	char						log_max, log_id[33];
-	filesize_t     *fs;
+  char            log_max, log_id[33];
+  filesize_t     *fs;
 
-	// Form an "ID" for logging this sequence.
-	// TODO: Util function shared with recovery scripts
-	fs      = &(file_sizes->fs[qndx]);
-	log_max = (fs->size > 32) ? 32 : fs->size;
-	for( i=0; i<log_max; ++i) {
-		if( fs->shm[i] == '\n' || fs->shm[i] == '\r' ) {
-			log_id[i] = ' ';
-		}
-		else {
-			log_id[i] = fs->shm[i];
-		}
-	}
-	log_id[i] = 0;
+  // Form an "ID" for logging this sequence.
+  // TODO: Util function shared with recovery scripts
+  fs      = &(file_sizes->fs[qndx]);
+  log_max = (fs->size > 32) ? 32 : fs->size;
+  for( i=0; i<log_max; ++i) {
+    if( fs->shm[i] == '\n' || fs->shm[i] == '\r' ) {
+      log_id[i] = ' ';
+    }
+    else {
+      log_id[i] = fs->shm[i];
+    }
+  }
+  log_id[i] = 0;
 
   // Wait for the child to finish
   if( (w=waitpid(pid,&status,0)) < 0 ) {
@@ -635,30 +674,29 @@ static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int rndx)
     // There was an error with the child DB process
     Vprint(SEV_ERROR,"Worker's wait on child failed.  Terminating.\n");
     Abort(1);
-	}
+  }
   // Check child exit status
   if( w ) {
     if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
       // The slave's child seemes to have finished correctly
       Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
-             SlaveInfo.rank,wid);		
-			// Log success
-			fprintf(SlaveInfo.log, "S    %s\n", log_id);
+	     SlaveInfo.rank,wid);		
+      // Log success
+      fprintf(SlaveInfo.log, "S    %s\n", log_id);
     } else {
       // There was an error with the child DB process
       Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
       if( WIFSIGNALED(status) ) {
-        Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
+	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
       }
-			// Log failure
-			fprintf(SlaveInfo.log, "E(1) %s\n", log_id);
+      // Log failure
+      fprintf(SlaveInfo.log, "E(1) %s\n", log_id);
     } 
   }
 
   // The child process is gone:  Write any results to our node's buffer.
   gettimeofday(&st, NULL);
-	fs = &(file_sizes->fs[rndx]);
-  Worker_WriteResults(fs->shm, fs->size, wid);
+  Worker_WriteResults(rndxs, wid);
   gettimeofday(&et, NULL);
   io_time += ((et.tv_sec*1000000+et.tv_usec) - 
              (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
@@ -716,16 +754,6 @@ static char **Worker_BuildArgv(int rank, int procs, int wid)
               args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
       argv[na] = strdup(buf);
       na++;
-    } else if( !strcmp(w,":IN:") ) {
-      // Input macro
-      sprintf(buf,":STDIN%d",wid*2);
-      argv[na] = strdup(buf);
-      na++;
-    } else if( !strcmp(w,":OUT:") ) {
-      // Output macro
-      sprintf(buf,":STDOUT%d",wid*2+1);
-      argv[na] = strdup(buf);
-      na++;
     } else { 
       // Just a regular word
       argv[na] = strdup(w);
@@ -781,8 +809,8 @@ static void Worker_Child_MapFDs(int rank, int wid)
 
   // Now apply the mappings
   m = strdup(args.dup2);
-  w = strtok_r(m, ":", &saveptr);
-  while( w ) {
+  for( w = strtok_r(m, ":", &saveptr); w; w = strtok_r(NULL, " ", &saveptr) ) {
+
     // Parse this one mapping
     if( sscanf(w,"%d,%d",&from,&to) != 2 ) {
       Vprint(SEV_ERROR, "Slave %d Worker %d's Child failed to parse fd mapping work.\n",rank,wid);
@@ -795,14 +823,12 @@ static void Worker_Child_MapFDs(int rank, int wid)
       fprintf(stderr,"Slave %d Worker %d's Child failed to dup2(%d,%d).\n",rank,wid,to,from);
       exit(1);
     }
-    // Advance to next mapping in list
-    w = strtok_r(NULL, " ", &saveptr);
   }
   safe_free(m);
 }
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
+static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int *rndxs)
 {
   char **argv;
   char  name[256],exe_name[256];
@@ -818,10 +844,12 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   nodes      = procs;
   loadstride = nodes/args.ndbs;
 
+  // Lock until child process signals us with SIGUSR1
+  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+
   // Parse the line to build argv[][] for child
   // PG: We use the stack so we avoid touching pages shared with MPI between
   //     fork and exec below. TODO: Could rework BuildArgv function
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
   argv = Worker_BuildArgv(rank,procs,wid);
 /*
   char *argi = s_argbuf;
@@ -837,7 +865,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   // Free the now unneeded argv array
   Worker_FreeArgv(argv);
 */
-  //pthread_mutex_unlock(&(SlaveInfo.fork_lock));
 
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
@@ -859,13 +886,11 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
   // Build a name for the exe
   sprintf(exe_name,"./%s",args.exe_base);
 
-  // Lock until child process signals us with SIGUSR1
-  //pthread_mutex_lock(&(SlaveInfo.fork_lock));
   if( (pid=fork()) > 0 ) {
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,qndx,rndx);
+    io_time = Worker_ChildIO(rank,pid,wid,qndx,rndxs);
   } else if( !pid ) {
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
@@ -889,6 +914,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int rndx)
 }
 
 
+// TODO: PG: Move to libzutils
 #define CHUNK 16384
 int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dcsz)
 {
@@ -992,11 +1018,12 @@ static void* Worker(void *arg)
   workunit_t     *workunit;
   size_t          dcsz;
   float           t_vi,t_vo,t_ic;
-  int             i,q,r,done=0;
+  int             f,i,q,r[SlaveInfo.nout_files],done=0;
   long            ib,idb;
   char            name[256];
 
   // Find the in/out SHMs for this worker
+  // Input
   q = -1;
   sprintf(name,":STDIN%d",wid*2);
   for(i=0; i<file_sizes->nfiles; i++) {
@@ -1009,19 +1036,21 @@ static void* Worker(void *arg)
     Vprint(SEV_ERROR,"Slave %d Worker %d failed to find q I/O SHM.\n",SlaveInfo.rank,wid);
     Abort(1);
   }
-  r = -1;
-  sprintf(name,":STDOUT%d",wid*2+1);
-  for(i=0; i<file_sizes->nfiles; i++) {
-    if( !strcmp(name,file_sizes->fs[i].name) ) {
-      r = i;
-      break;
+  // Outputs
+  for( f=0; f<SlaveInfo.nout_files; ++f ) {
+    r[f] = -1;
+    sprintf(name,":STDOUT%d:%d",wid*2+1,f);
+    for(i=0; i<file_sizes->nfiles; i++) {
+      if( !strcmp(name,file_sizes->fs[i].name) ) {
+	r[f] = i;
+	break;
+      }
+    }
+    if( r[f] == -1 ) {
+      Vprint(SEV_ERROR,"Slave %d Worker %d failed to find r I/O SHM.\n",SlaveInfo.rank,wid);
+      Abort(1);
     }
   }
-  if( r == -1 ) {
-    Vprint(SEV_ERROR,"Slave %d Worker %d failed to find r I/O SHM.\n",SlaveInfo.rank,wid);
-    Abort(1);
-  }
-
 
   // Done with init, start processing loop
   while( !done ) {
@@ -1067,7 +1096,7 @@ static void* Worker(void *arg)
       // Inflate the zlib compressed block(s) into the SHM
       gettimeofday(&st, NULL);
       Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d inflating at %d.%06d.\n",
-                   SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
+             SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
 
       if( zinf_memcpy((unsigned char*)file_sizes->fs[q].shm,(compressedb_t*)(workunit->data),(size_t)workunit->len,&dcsz) != Z_OK ) {
         Vprint(SEV_ERROR,"Slave %d Worker %d zlib inflate failed. Terminating.\n",SlaveInfo.rank,wid);
@@ -1076,27 +1105,29 @@ static void* Worker(void *arg)
       }
       gettimeofday(&et, NULL);
       Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
-                   SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
+	     SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
       t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
-              (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+	      (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
 
-			if (dcsz > QUERYBUFF_SIZE) {
-				Vprint(SEV_ERROR,"Compressed block of size %ld is too large for query buffer maximum of %ld.\n",
-						       dcsz, QUERYBUFF_SIZE);
-        si->worker_error = wid;
-				return NULL;
-			}
+      if( dcsz > QUERYBUFF_SIZE ) {
+	Vprint(SEV_ERROR,"Compressed block of size %ld is too large for query buffer maximum of %ld.\n",
+	    dcsz, QUERYBUFF_SIZE);
+	si->worker_error = wid;
+	return NULL;
+      }
 				
       ib  = workunit->len;
       idb = dcsz;
       file_sizes->fs[q].size = dcsz;
-      file_sizes->fs[r].size = 0;
+      for( f=0; f<SlaveInfo.nout_files; ++f ) {
+	file_sizes->fs[r[f]].size = 0;
+      }
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
       Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d done with search at %d.%06d.\n",
-                   SlaveInfo.rank, wid, tv.tv_sec, tv.tv_usec);
+             SlaveInfo.rank, wid, tv.tv_sec, tv.tv_usec);
       //Vprint(SEV_DEBUG,"Slave %d Worker %d done with search.\n",SlaveInfo.rank,wid);
       break;
     default:
@@ -1162,6 +1193,7 @@ void Start_Workers()
 // Special thanks to Mark Adler for providing the non-copyrighted
 // public domain example program "zpipe.c", from which this function
 // is based (Version 1.4  December 11th, 2005).
+// TODO: Use zutils
 static float ZCompressWrite(void *source, int sz, FILE *dest, int level, long *bw)
 {
   struct timeval  st,et;
@@ -1395,35 +1427,42 @@ static size_t Write(int fd, void *buf, size_t count)
 void* ResultWriter(void *arg)
 {
   struct timeval st,et;
-  char           fn[512], *ucbuff, *cbuff;
-  long           nuc=0,nc=0,bw,bc;
+  char           fn[512];
+  char          *ucbuff[SlaveInfo.nout_files], *cbuff[SlaveInfo.nout_files];
+  long           nuc[SlaveInfo.nout_files],     nc[SlaveInfo.nout_files];
+  long           bw, bc;
   float          writet,compt=0.0f;
-  int            f;
+  int            i;
+  int            f[SlaveInfo.nout_files];
 
-  
-  // Allocate space to hold the "double" of the double-buffer
-  if( !(ucbuff=malloc(RESULTBUFF_GBL_SIZE*sizeof(char))) ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate second buffer.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    return NULL;
-  }
+  for( i = 0; i < SlaveInfo.nout_files; ++i ) {
+    // Allocate space to hold the "double" of the double-buffer
+    if( !(ucbuff[i]=malloc(RESULTBUFF_GBL_SIZE*sizeof(char))) ) {
+      Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate second buffer.  Terminating.\n",
+	     SlaveInfo.rank);
+      result_thread_error = 1;
+      return NULL;
+    }
 
-  // Allocate space to hold the compressed output buffer
-  if( !(cbuff=malloc(RESULTBUFF_GBL_SIZE*sizeof(char))) ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate compressed buffer.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    return NULL;
-  }
+    // Allocate space to hold the compressed output buffer
+    if( !(cbuff[i]=malloc(RESULTBUFF_GBL_SIZE*sizeof(char))) ) {
+      Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate compressed buffer.  Terminating.\n",
+	     SlaveInfo.rank);
+      result_thread_error = 1;
+      return NULL;
+    }
 
-  // Setup/Open output file 
-  sprintf(fn,"slave-%d.stdout",SlaveInfo.rank);
-  if( !(f=open(fn,O_CREAT|O_EXCL|O_WRONLY)) ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    return NULL;
+    // Setup/Open output file 
+    // FIXME: PG!! bounds checking (resize, or use asprintf)
+    snprintf(fn, sizeof(fn), "slave-%d-%s.stdout", SlaveInfo.rank, SlaveInfo.out_files[i]);
+    if( !(f[i]=open(fn,O_CREAT|O_EXCL|O_WRONLY)) ) {
+      Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file.  Terminating.\n",
+	     SlaveInfo.rank);
+      result_thread_error = 1;
+      return NULL;
+    }
+    // Reset counters
+    nuc[i] = nc[i] = 0;
   }
 
   // !!av: Gating hack
@@ -1436,61 +1475,69 @@ void* ResultWriter(void *arg)
     // Lock
     pthread_mutex_lock(&(SlaveInfo.resultb_lock));
     // Wait for "not empty" status
-    while( !resultbuff->count && !SlaveInfo.done ) {
+    while( !Writer_IsDataAvailable() && !SlaveInfo.done ) {
       Vprint(SEV_DEBUG,"Slave %d's Writer waiting for data.\n",SlaveInfo.rank);
       pthread_cond_wait(&(SlaveInfo.resultb_nempty), &(SlaveInfo.resultb_lock));
     }
     compt = writet = 0.0f;
     bw = bc = 0;
 
-    // If there is not enough room, perform a flush of ucbuff first
-    if( RESULTBUFF_GBL_SIZE <= (nuc+resultbuff->count) ) {
-      gettimeofday(&st, NULL);
-      nc += ZCompress((void*)ucbuff, nuc, ((void*)cbuff)+nc, Z_DEFAULT_COMPRESSION);
-      bc += nuc;
-      nuc = 0;
-      gettimeofday(&et, NULL);
-      compt += ((et.tv_sec*1000000+et.tv_usec) -
-               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-    }
-    
-    // Copy the data from the global buffer to our local buffer
-    memcpy(ucbuff+nuc,(char*)resultbuff->buff,resultbuff->count);
-    nuc += resultbuff->count;
+    for( i=0; i<SlaveInfo.nout_files; ++i ) {
 
-    // Now that we have a local copy, record that the global
-    // buffer is no longer full and release the lock.
-    resultbuff->count = 0;
+      // If there is not enough room, perform a flush of ucbuff first
+      if( RESULTBUFF_GBL_SIZE <= (nuc[i]+resultbuff[i].count) ) {
+	gettimeofday(&st, NULL);
+	nc[i] += ZCompress((void*)ucbuff[i], nuc[i], ((void*)cbuff[i])+nc[i], Z_DEFAULT_COMPRESSION);
+	bc += nuc[i];
+	nuc[i] = 0;
+	gettimeofday(&et, NULL);
+	compt += ((et.tv_sec*1000000+et.tv_usec) -
+		 (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+      }
+    
+      // Copy the data from the global buffer to our local buffer
+      memcpy(ucbuff[i]+nuc[i],(char*)resultbuff[i].buff,resultbuff[i].count);
+      nuc[i] += resultbuff[i].count;
+
+      // Now that we have a local copy, record that the global
+      // buffer is no longer full
+      resultbuff[i].count = 0;
+    }
+
+    // Done with global buffers, release the lock and
+    // tell workers to continue
     pthread_cond_signal(&(SlaveInfo.resultb_nfull));
     pthread_mutex_unlock(&(SlaveInfo.resultb_lock));
 
-    // Flush uncompressed buffer if at least half full
-    if( nuc >= (RESULTBUFF_GBL_SIZE/2) ) {
-      gettimeofday(&st, NULL);
-      nc += ZCompress((void*)ucbuff, nuc, ((void*)cbuff)+nc, Z_DEFAULT_COMPRESSION);
-      bc += nuc;
-      nuc = 0;
-      gettimeofday(&et, NULL);
-      compt += ((et.tv_sec*1000000+et.tv_usec) -
-               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-    }
-
-    // Flush compressed buffer if at least half full
-    if( nc >= (RESULTBUFF_GBL_SIZE/2) ) {
-      // Perform the actual write to the filesystem
-      Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc);
-      gettimeofday(&st, NULL);
-      if( Write(f,(void*)cbuff,nc) != nc ) {
-        Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
-               SlaveInfo.rank);
-        result_thread_error = 1;
-        return NULL;
+    for( i=0; i<SlaveInfo.nout_files; ++i ) {
+      // Flush uncompressed buffer if at least half full
+      if( nuc[i] >= (RESULTBUFF_GBL_SIZE/2) ) {
+	gettimeofday(&st, NULL);
+	nc[i] += ZCompress((void*)ucbuff[i], nuc[i], ((void*)cbuff[i])+nc[i], Z_DEFAULT_COMPRESSION);
+	bc += nuc[i];
+	nuc[i] = 0;
+	gettimeofday(&et, NULL);
+	compt += ((et.tv_sec*1000000+et.tv_usec) -
+		 (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
       }
-      bw = nc;
-      nc = 0;
-      gettimeofday(&et, NULL);
-      writet = ((et.tv_sec*1000000+et.tv_usec) -
-               (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+
+      // Flush compressed buffer if at least half full
+      if( nc[i] >= (RESULTBUFF_GBL_SIZE/2) ) {
+	// Perform the actual write to the filesystem
+	Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc[i]);
+	gettimeofday(&st, NULL);
+	if( Write(f[i],(void*)cbuff[i],nc[i]) != nc[i] ) {
+	  Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
+		 SlaveInfo.rank);
+	  result_thread_error = 1;
+	  return NULL;
+	}
+	bw += nc[i];
+	nc[i] = 0;
+	gettimeofday(&et, NULL);
+	writet += ((et.tv_sec*1000000+et.tv_usec) -
+		  (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+      }
     }
 
     // Record timings
@@ -1499,43 +1546,46 @@ void* ResultWriter(void *arg)
     SlaveInfo.t_oc += compt;
     SlaveInfo.b_od += bc;
     SlaveInfo.b_o  += bw;
-    pthread_mutex_unlock(&(SlaveInfo.time_lock));      
+    pthread_mutex_unlock(&(SlaveInfo.time_lock));
   }
 
   // Our parent slave is done; flush and exit
   writet = compt = 0.0f;
   bc = bw = 0;
-  if( nuc ) {
-    gettimeofday(&st, NULL);
-    nc += ZCompress((void*)ucbuff, nuc, ((void*)cbuff)+nc, Z_DEFAULT_COMPRESSION);
-    bc = nuc;
-    nuc = 0;
-    gettimeofday(&et, NULL);
-    compt = ((et.tv_sec*1000000+et.tv_usec) -
-            (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-  }
-  if( nc ) {
-    Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc);
-    gettimeofday(&st, NULL);
-    // !!av: Gating hack
-    Nc = nc;
-    //if( Write(f,(void*)cbuff,nc) != nc ) {
-    //  Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
-    //         SlaveInfo.rank);
-    //  result_thread_error = 1;
-    //  return NULL;
-    //}
-    bw = nc;
-    nc = 0;
-    gettimeofday(&et, NULL);
-    writet = ((et.tv_sec*1000000+et.tv_usec) -
-             (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-  }
-  // !!av: gating hack
-  // close(f);
+  for( i=0; i<SlaveInfo.nout_files; ++i ) {
+    if( nuc[i] ) {
+      gettimeofday(&st, NULL);
+      nc[i] += ZCompress((void*)ucbuff[i], nuc[i], ((void*)cbuff[i])+nc[i], Z_DEFAULT_COMPRESSION);
+      bc += nuc;
+      nuc[i] = 0;
+      gettimeofday(&et, NULL);
+      compt += ((et.tv_sec*1000000+et.tv_usec) -
+	       (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+    }
+    if( nc[i] ) {
+      Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc[i]);
+      gettimeofday(&st, NULL);
+      // !!av: Gating hack
+      Nc = nc[i];
+      //if( Write(f,(void*)cbuff,nc) != nc ) {
+      //  Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
+      //         SlaveInfo.rank);
+      //  result_thread_error = 1;
+      //  return NULL;
+      //}
+      bw += nc[i];
+      nc[i] = 0;
+      gettimeofday(&et, NULL);
+      writet += ((et.tv_sec*1000000+et.tv_usec) -
+	        (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+    }
+
+    // !!av: gating hack
+    // close(f[i]);
 	
-	// Don't need write exclusion anymore.  Make readable.
-	chmod(fn, S_IRUSR | S_IWUSR | S_IRGRP);
+    // Don't need write exclusion anymore.  Make readable.
+    fchmod(f[i], S_IRUSR | S_IWUSR | S_IRGRP);
+  }
 
   // Record timings
   pthread_mutex_lock(&(SlaveInfo.time_lock));
@@ -1554,16 +1604,18 @@ void* ResultWriter(void *arg)
 
 
 // Create the SHM (and synchronization) used to managed the shared global result buffer.
-static void CreateResultBuffer()
+// TODO: Pass in num-buffers instead of SlaveInfo?
+static void CreateResultBuffers()
 {
   pthread_attr_t attr;
 
   // Create and init the result buffer SHM
-  if( !(resultbuff=malloc(RESULTBUFF_SHM_SIZE)) ) {
+  if( !(resultbuff=malloc(RESULTBUFF_SHM_SIZE * SlaveInfo.nout_files)) ) {
     Vprint(SEV_ERROR,"Failed to allocate shared result buffer. Terminating.\n");
     Abort(1);
   }
-  memset(resultbuff,0,RESULTBUFF_SHM_SIZE);
+  // FIXME: PG: We should be able to only zero out the headers
+  memset(resultbuff,0,RESULTBUFF_SHM_SIZE * SlaveInfo.nout_files);
   
   // Initialize result writer synchronization objects
   pthread_mutex_init(&(SlaveInfo.resultb_lock),  NULL);
@@ -1583,27 +1635,39 @@ static void CreateResultBuffer()
 
 static void Init_Slave()
 {
-  char fn[1024], *jn;
+  char fn[1024], *jn, *files, *s, *saveptr;
   long wr;
-  int  rv,fd;
+  int  rv, fd, i;
   
   // Open the log file
   if( (fd=open("log", O_WRONLY|O_CREAT|O_TRUNC/*|O_NOATIME*/,
-					                S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) < 0 ) {
+	  S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) < 0 ) {
     Vprint(SEV_ERROR,"Failed to open log for writing. Terminating.\n");
     Abort(1);
   }
-	SlaveInfo.log = fdopen(fd, "w");
+  SlaveInfo.log = fdopen(fd, "w");
 
-	// Log header
-	fprintf(SlaveInfo.log, "#MCW Log File\n");
+  // Log header
+  fprintf(SlaveInfo.log, "#MCW Log File\n");
   jn = getenv("MCW_JOB_NAME");
-	if (jn) {
-		fprintf(SlaveInfo.log, "#mcw.job=%s\n", jn);
-	}
-	fprintf(SlaveInfo.log, "#mcw.rank=%d\n", SlaveInfo.rank);
-	fprintf(SlaveInfo.log, "#mcw.version=0.1.0\n");
-	fflush(SlaveInfo.log);
+  if( jn ) {
+    fprintf(SlaveInfo.log, "#mcw.job=%s\n", jn);
+  }
+  fprintf(SlaveInfo.log, "#mcw.rank=%d\n", SlaveInfo.rank);
+  fprintf(SlaveInfo.log, "#mcw.version=0.1.0\n");
+  fflush(SlaveInfo.log);
+
+  // Cache information about output filenames (perhaps move to args_t)
+  files = strdup(args.out_files);
+  // Count entries first to avoid reallocing over and over TODO: use str_cnt_chr
+  for( s = files, i = 0; s[i]; s[i] == ':' ? ++i : ++s );
+  SlaveInfo.nout_files = i;
+  SlaveInfo.out_files  = malloc(i * sizeof(char *));
+  // Now store entries, just carve them out of our dup'd files array
+  for (s = strtok_r(files, ":", &saveptr), i = 0; s;
+       s = strtok_r(NULL, ":", &saveptr), ++i ) {
+    SlaveInfo.out_files[i] = s;
+  }
 
   // Build a file name for our private exe copy
   sprintf(fn,"%s",args.exe_base);
@@ -1626,7 +1690,7 @@ static void Init_Slave()
   close(fd);
 
   // Create result buffer (only for ranks responsible)
-  CreateResultBuffer();
+  CreateResultBuffers();
 
   // Initialize experimental fork lock 
   pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL);
@@ -1636,7 +1700,7 @@ static void Init_Slave()
 static void Slave_Exit()
 {
   struct timeval  st,et;
-	int i;
+  int i;
 
   // Tell the writer thread it is done and wait for it
   Vprint(SEV_DEBUG,"Slave %d waiting for writer to finish.\n",SlaveInfo.rank);
@@ -2175,13 +2239,13 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
 
   // Init MPI, get the number of MPI processes and our rank
   rc = MPI_Init(argc,argv);
-	/*
-  rc = MPI_Init_thread(argc,argv,MPI_THREAD_MULTIPLE, &thread_support);
-	if(thread_support != MPI_THREAD_MULTIPLE) {
-    Vprint(SEV_ERROR,"MPI_THREAD_MULTIPLE not supported. Terminating.\n");
-    Abort(rc);
-	}
-	*/
+  /*
+     rc = MPI_Init_thread(argc,argv,MPI_THREAD_MULTIPLE, &thread_support);
+     if(thread_support != MPI_THREAD_MULTIPLE) {
+     Vprint(SEV_ERROR,"MPI_THREAD_MULTIPLE not supported. Terminating.\n");
+     Abort(rc);
+     }
+   */
 
   if(rc != MPI_SUCCESS) {
     Vprint(SEV_ERROR,"Error starting MPI program. Terminating.\n");
@@ -2273,6 +2337,7 @@ static void UsageError()
   Vprint(SEV_ERROR,"\tMCW_S_EXE\n");
   Vprint(SEV_ERROR,"\tMCW_S_LINE\n");
   Vprint(SEV_ERROR,"\tMCW_S_DUP2\n");
+  Vprint(SEV_ERROR,"\tMCW_O_FILES\n");
   Abort(1);
 }
 
@@ -2317,6 +2382,12 @@ static void Parse_Environment(int procs)
   if( sscanf(p,"%d",&(args.wum)) != 1 ) {
     UsageError();
   }
+
+  // Read Output settings
+  if( !(p=getenv("MCW_O_FILES")) ) {
+    UsageError();
+  }
+  args.out_files = strdup(p);
 
   // Read search settings
   if( !(p=getenv("MCW_S_TIMELIMIT")) ) {
@@ -2496,3 +2567,5 @@ int main(int argc, char **argv)
   MPI_Finalize();
   return 0;
 }
+
+// vim: ts=8:sts=2:sw=2
