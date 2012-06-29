@@ -23,6 +23,7 @@
 #include "tscq.h"
 #include "mcw.h"
 
+#define UNUSED(param) (void)(param)
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -65,9 +66,9 @@ float init_time;
 
 
 // !!av: Gating hack
-char *Ucbuff, *Cbuff;
-int   Nc,Fd;
-int   ConcurrentWriters = 512;
+char **Ucbuff, **Cbuff;
+int   *Nc, *Fd;
+int    ConcurrentWriters = 512;
 
 ////////////////////////////////////////////////////////////////////////////////
 //                                 Util Code                                  //
@@ -680,7 +681,7 @@ static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int *rndxs)
     if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
       // The slave's child seemes to have finished correctly
       Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
-	     SlaveInfo.rank,wid);		
+	     rank,wid);		
       // Log success
       fprintf(SlaveInfo.log, "S    %s\n", log_id);
     } else {
@@ -1426,6 +1427,7 @@ static size_t Write(int fd, void *buf, size_t count)
 
 void* ResultWriter(void *arg)
 {
+  UNUSED(arg);
   struct timeval st,et;
   char           fn[512];
   char          *ucbuff[SlaveInfo.nout_files], *cbuff[SlaveInfo.nout_files];
@@ -1461,14 +1463,27 @@ void* ResultWriter(void *arg)
       result_thread_error = 1;
       return NULL;
     }
+
     // Reset counters
     nuc[i] = nc[i] = 0;
   }
 
   // !!av: Gating hack
-  Ucbuff = ucbuff;
-  Cbuff = cbuff;
-  Fd = f;
+  Ucbuff = malloc(SlaveInfo.nout_files*sizeof(char*));
+  Cbuff  = malloc(SlaveInfo.nout_files*sizeof(char*));
+  Fd     = malloc(SlaveInfo.nout_files*sizeof(int));
+  Nc     = malloc(SlaveInfo.nout_files*sizeof(int));
+  if( !(Ucbuff && Cbuff && Fd && Nc) ) {
+    Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate gating-hack storage.  Terminating.\n",
+	   SlaveInfo.rank);
+    result_thread_error = 1;
+    return NULL;
+  }
+  memcpy(Ucbuff, ucbuff, sizeof(ucbuff));
+  memcpy(Cbuff,  cbuff,  sizeof(cbuff));
+  memcpy(Fd,     f,      sizeof(f));
+  memcpy(Nc,     nc,     sizeof(nc));
+
 
   // Repeat until our controlling slave is done
   while( !SlaveInfo.done ) {
@@ -1556,7 +1571,7 @@ void* ResultWriter(void *arg)
     if( nuc[i] ) {
       gettimeofday(&st, NULL);
       nc[i] += ZCompress((void*)ucbuff[i], nuc[i], ((void*)cbuff[i])+nc[i], Z_DEFAULT_COMPRESSION);
-      bc += nuc;
+      bc += nuc[i];
       nuc[i] = 0;
       gettimeofday(&et, NULL);
       compt += ((et.tv_sec*1000000+et.tv_usec) -
@@ -1566,7 +1581,7 @@ void* ResultWriter(void *arg)
       Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc[i]);
       gettimeofday(&st, NULL);
       // !!av: Gating hack
-      Nc = nc[i];
+      Nc[i] = nc[i];
       //if( Write(f,(void*)cbuff,nc) != nc ) {
       //  Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
       //         SlaveInfo.rank);
@@ -1700,7 +1715,7 @@ static void Init_Slave()
 static void Slave_Exit()
 {
   struct timeval  st,et;
-  int i;
+  int i, f;
 
   // Tell the writer thread it is done and wait for it
   Vprint(SEV_DEBUG,"Slave %d waiting for writer to finish.\n",SlaveInfo.rank);
@@ -1719,7 +1734,9 @@ static void Slave_Exit()
   gettimeofday(&st, NULL);
   while( i-- ) {
     if( !(i%SlaveInfo.rank) ) {
-      Write(Fd, Cbuff, Nc);
+      for( f=0; f<SlaveInfo.nout_files; ++f ) {
+        Write(Fd[f], Cbuff[f], Nc[f]);
+      }
     }
     MPI_Barrier(MPI_COMM_WORLD);
   }
@@ -1727,17 +1744,18 @@ static void Slave_Exit()
   SlaveInfo.t_o  = ((et.tv_sec*1000000+et.tv_usec) -
                    (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
 
-	// Finalize log
-	fprintf(SlaveInfo.log, "#END");
-	fflush(SlaveInfo.log);
-	fclose(SlaveInfo.log);
+  // Finalize log
+  fprintf(SlaveInfo.log, "#END");
+  fflush(SlaveInfo.log);
+  fclose(SlaveInfo.log);
 }
 
 
 static void* Slave_Listener(void* arg)
 {
+  UNUSED(arg);
 
-	// FIXME: HACK, it is stupid to do this. We should just fix the messaging policy
+  // FIXME: HACK, it is stupid to do this. We should just fix the messaging policy
   long st;
 
   // Record start time
@@ -1773,7 +1791,6 @@ static void* Slave_Listener(void* arg)
 static void Start_Listener()
 {
   pthread_attr_t  attr;
-  int             i;
 
   // Setup thread properties
   pthread_attr_init(&attr);
@@ -1963,6 +1980,7 @@ static void Load_File(char *name, long size, void *dest)
 
 static char **Find_DBFiles(int rank, int *nfiles)
 {
+  UNUSED(rank);
   char  *fl,*f,**files,*saveptr=NULL;
   int    nf;
 
@@ -2424,6 +2442,7 @@ static void cleanup()
 
 static void sighndler(int arg)
 {
+  UNUSED(arg);
   // Be verbose
   if( !Rank ) {
     write(2,"ms: Caught signal; cleaning up.\n",32);
@@ -2436,6 +2455,7 @@ static void sighndler(int arg)
 
 static void sigusr_forkunlock(int arg)
 {
+  UNUSED(arg);
   pthread_mutex_unlock(&(SlaveInfo.fork_lock));
 }
 
@@ -2452,6 +2472,7 @@ static void exitfunc()
 
 void* killtimer(void *arg)
 {
+  UNUSED(arg);
   long st;
 
   // Record start time
