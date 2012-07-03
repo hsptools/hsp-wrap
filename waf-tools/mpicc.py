@@ -31,10 +31,20 @@ def find_mpi_cc(conf):
 
 	# An MPI-Specific ConfigSet
 	conf.setenv('mpicc', conf.env)
+
+	# Compiler Options (use mpicc)
 	conf.env.CC = cc
 	conf.env.LINK_CC = cc
+	#conf.env.CFLAGS = '-Wextra'
+
+	# Linker Options (Remove '-Wl,-B[static,dynamic]')
+	conf.env.LINKFLAGS_cstlib = []
+	conf.env.LINKFLAGS_cxxstlib = []
+	conf.env.SHLIB_MARKER = []
+	conf.env.STLIB_MARKER = []
+
+	# done with MPI-Specific ConfigSet
 	conf.setenv('')
-	conf.env.CFLAGS = '-Wextra'
 
 def configure(conf):
 	conf.find_mpi_cc()

@@ -7,7 +7,6 @@ from waflib import Logs
 def build(bld):
 
     # Libraries
-    bld.stlib(source='tscq.c', target='tscq')
     bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
     bld.stlib(source='strutils.c', target='strutils')
 
@@ -35,6 +34,7 @@ def build(bld):
 
     # MPI apps
     mpienv = bld.all_envs['mpicc']
-    bld.program(source='mcw.c', includes='. ../..', target='mcw', use='ZLIB tscq', env=mpienv)
-    bld.program(source='SHMclean.c', target='SHMclean', env=mpienv)
-    bld.program(source='wrap.c', target='wrap', env=mpienv)
+    bld.objects(source='tscq.c', target='tscq', env=mpienv)
+    bld.program(source='mcw.c', includes='. ../..', target='mcw', use='M ZLIB tscq', env=mpienv)
+    #bld.program(source='SHMclean.c', target='SHMclean', env=mpienv)
+    #bld.program(source='wrap.c', target='wrap', env=mpienv)
