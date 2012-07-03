@@ -17,6 +17,7 @@ def build(bld):
 
     ## user libraries
     bld.stlib(source='stdiowrap.c', target='stdiowrap', defines='BACKEND_SHM')
+
     bld.new_task_gen(target='stdiowrap++', use='stdiowrap filebufwrap fstreamwrap',
-                features='cxx cstlib', defines='BACKEND_SHM')
+                features='cxx cxxstlib', defines='BACKEND_SHM')
 

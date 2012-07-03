@@ -1443,7 +1443,6 @@ void* ResultWriter(void *arg)
 {
   UNUSED(arg);
   struct timeval st,et;
-  char           fn[512];
   char          *ucbuff[SlaveInfo.nout_files], *cbuff[SlaveInfo.nout_files];
   long           nuc[SlaveInfo.nout_files],     nc[SlaveInfo.nout_files];
   long           bw, bc;
@@ -1469,9 +1468,7 @@ void* ResultWriter(void *arg)
     }
 
     // Setup/Open output file 
-    // FIXME: PG!! bounds checking (resize, or use asprintf)
-    snprintf(fn, sizeof(fn), "slave-%d-%s.stdout", SlaveInfo.rank, SlaveInfo.out_files[i]);
-    if( !(f[i]=open(fn,O_CREAT|O_EXCL|O_WRONLY)) ) {
+    if( !(f[i]=open(SlaveInfo.out_files[i], O_CREAT|O_EXCL|O_WRONLY)) ) {
       Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file.  Terminating.\n",
 	     SlaveInfo.rank);
       result_thread_error = 1;
