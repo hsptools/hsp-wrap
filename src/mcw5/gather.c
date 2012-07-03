@@ -5,14 +5,17 @@
 #include "strutils.h"
 #include "zutils.h"
 
-#define NARGS 1
+#define NARGS 2
+
+// Filename of output files (query)
+char *fn_base;
 
 static void
 print_usage(FILE *f) {
-  fprintf(f, "\nUsage: gather DIR\n\n");
-  fprintf(f, "Gather and decompress all results in mcw job output\n"
-             "directory, DIR, and output the results to standard output.\n\n");
-  fprintf(f, "Example: gather job-foo > foo.results\n");
+  fprintf(f, "\nUsage: gather DIR FILENAME\n\n");
+  fprintf(f, "Gather and decompress all results for file FILENAME in mcw job \n"
+             "output directory, DIR, and output the results to standard output.\n\n");
+  fprintf(f, "Example: gather job-foo out > foo.results\n");
 }
 
 
@@ -37,7 +40,7 @@ print_file(const char *fpath) {
 
 static int
 peek_dir(const char *fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf) {
-  if (tflag == FTW_F && str_ends_with(fpath+ftwbuf->base, ".stdout")) {
+  if (tflag == FTW_F && str_ends_with(fpath+ftwbuf->base, fn_base)) {
     print_file(fpath);
   }
   return 0;
@@ -53,6 +56,8 @@ main(int argc, char **argv) {
   if (argc == NARGS+1) {
     // Path to job directory
     path = argv[1];
+    // Filename of output files
+    fn_base = argv[2];
 
     // Directory exists?
     if (!stat(path, &st)) {

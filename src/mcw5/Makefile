@@ -32,7 +32,7 @@ PROF_LIBS=   -lm -lz -lexpat $(FPMPI_LDFLAGS)
 # default build
 all: mcw wrap zextract tools
 
-tools: SHMclean xmlparse fastatools mol2tools
+tools: SHMclean xmlparse gather fastatools mol2tools
 fastatools: fastalens fastadist splitfasta sortfasta compressfasta compressfasta0
 mol2tools: splitmol2 compressmol2
 
@@ -60,6 +60,16 @@ strutils.o: strutils.c Makefile
 
 zutils.o: zutils.c Makefile
 	$(CC) $(OPTS) $(CFLAGS) -c zutils.c
+
+##
+
+gather.o: gather.c strutils.h zutils.h Makefile
+	$(CC) $(OPTS) $(CFLAGS) -c gather.c
+
+gather: gather.o strutils.o zutils.o Makefile
+	$(CC) $(OPTS) $(CFLAGS) -o gather gather.o strutils.o zutils.o $(LIBS)
+
+##
 
 fastalens.o: fastalens.c Makefile
 	$(CC) $(OPTS) $(CFLAGS) -c fastalens.c
@@ -101,7 +111,7 @@ splitfasta: splitfasta.o Makefile
 
 #
 
-compressfasta.o: compressfasta.c Makefile
+compressfasta.o: compressfasta.c zutils.h Makefile
 	$(CC) $(OPTS) $(CFLAGS) -DCF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION -c compressfasta.c
 
 compressfasta: compressfasta.o zutils.o Makefile
@@ -109,7 +119,7 @@ compressfasta: compressfasta.o zutils.o Makefile
 
 #
 
-compressfasta0.o: compressfasta.c Makefile
+compressfasta0.o: compressfasta.c zutils.h Makefile
 	$(CC) $(OPTS) $(CFLAGS) -DCF_COMPRESSION_LEVEL=Z_NO_COMPRESSION -c compressfasta.c -o compressfasta0.o
 
 compressfasta0: compressfasta0.o zutils.o Makefile
@@ -117,7 +127,7 @@ compressfasta0: compressfasta0.o zutils.o Makefile
 
 ##
 
-compressmol2.o: compressmol2.c Makefile
+compressmol2.o: compressmol2.c zutils.h Makefile
 	$(CC) $(OPTS) $(CFLAGS) -c compressmol2.c
 
 compressmol2: compressmol2.o zutils.o Makefile
