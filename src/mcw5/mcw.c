@@ -74,6 +74,20 @@ int    ConcurrentWriters = 512;
 //                                 Util Code                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
+// TODO: link with strutils.o
+int
+str_cnt_chr(const char *str, char chr) {
+  int i = 0;
+  while( str[i] ) {
+    if( str[i] == chr ) {
+      ++i;
+    } else {
+      ++str;
+    }
+  }
+  return i;
+}
+
 
 static void Vprint(int sev, char *fmt, ...)
 {
@@ -1034,7 +1048,7 @@ static void* Worker(void *arg)
     }
   }
   if( q == -1 ) {
-    Vprint(SEV_ERROR,"Slave %d Worker %d failed to find q I/O SHM.\n",SlaveInfo.rank,wid);
+    Vprint(SEV_ERROR,"Slave %d Worker %d failed to find q I/O SHM. (Pseudo filename: %s)\n",SlaveInfo.rank,wid,name);
     Abort(1);
   }
   // Outputs
@@ -1048,7 +1062,7 @@ static void* Worker(void *arg)
       }
     }
     if( r[f] == -1 ) {
-      Vprint(SEV_ERROR,"Slave %d Worker %d failed to find r I/O SHM.\n",SlaveInfo.rank,wid);
+      Vprint(SEV_ERROR,"Slave %d Worker %d failed to find r I/O SHM. (Pseudo filename: %s)\n",SlaveInfo.rank,wid,name);
       Abort(1);
     }
   }
@@ -1675,7 +1689,7 @@ static void Init_Slave()
   // Cache information about output filenames (perhaps move to args_t)
   files = strdup(args.out_files);
   // Count entries first to avoid reallocing over and over TODO: use str_cnt_chr
-  for( s = files, i = 0; s[i]; s[i] == ':' ? ++i : ++s );
+  i = str_cnt_chr(files, ':') + 1;
   SlaveInfo.nout_files = i;
   SlaveInfo.out_files  = malloc(i * sizeof(char *));
   // Now store entries, just carve them out of our dup'd files array
@@ -2029,7 +2043,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   void           *shm;
   long            shmsz;
   char          **files,name[1024];
-  int             i,rv,node,nodes,loadstride,range[1][3],nfiles;
+  int             i,j,rv,node,nodes,loadstride,range[1][3],nfiles,nout_files;
   MPI_Group       oldgroup,group;
   MPI_Comm        newcomm=MPI_COMM_NULL,comm;
 
@@ -2040,6 +2054,8 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   node       = rank;
   nodes      = procs;
   loadstride = nodes/args.ndbs;
+
+  nout_files = str_cnt_chr(args.out_files, ':') + 1;
 
   // This is just for timing data, really
   (*lt)=0.0f;
@@ -2089,8 +2105,10 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       for(i=0; i<MCW_NCORES; i++) {
         sprintf(name,":STDIN%d",i*2);
         Create_DBSHM(name,QUERYBUFF_SIZE);
-        sprintf(name,":STDOUT%d",i*2+1);
-        Create_DBSHM(name,RESULTBUFF_SIZE);
+	for(j=0; j<nout_files; j++) {
+	  sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	  Create_DBSHM(name,RESULTBUFF_SIZE);
+	}
       }
       // For each DB file
       for(i=0; i < nfiles; i++) {
@@ -2152,8 +2170,10 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       for(i=0; i<MCW_NCORES; i++) {
         sprintf(name,":STDIN%d",i*2);
         Create_DBSHM(name,QUERYBUFF_SIZE);
-        sprintf(name,":STDOUT%d",i*2+1);
-        Create_DBSHM(name,RESULTBUFF_SIZE);
+	for(j=0; j<nout_files; j++) {
+	  sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	  Create_DBSHM(name,RESULTBUFF_SIZE);
+	}
       }
       // For each DB file
       for(i=0; i < nfiles; i++) {
@@ -2204,8 +2224,10 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
     for(i=0; i<MCW_NCORES; i++) {
       sprintf(name,":STDIN%d",i*2);
       Create_DBSHM(name,QUERYBUFF_SIZE);
-      sprintf(name,":STDOUT%d",i*2+1);
-      Create_DBSHM(name,RESULTBUFF_SIZE);
+      for(j=0; j<nout_files; j++) {
+	sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	Create_DBSHM(name,RESULTBUFF_SIZE);
+      }
     }
     // For each DB file
     for(i=0; i < nfiles; i++) {

@@ -1,0 +1,38 @@
+#!/bin/bash
+
+PREFIX="target"
+
+
+# Get Options
+OPTS="prefix:"
+ARGS=$(getopt -s bash --options "" --longoptions $OPTS --name "hsp" -- "$@" )
+eval set -- "$ARGS" 
+
+while true; do
+	case $1 in 
+		--prefix)
+			shift
+			PREFIX=$1
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			shift
+			break
+			;;
+	esac
+	shift
+done
+
+# Configure HSP for installation
+sed "s:%PREFIX%:$PREFIX:g" Makefile.in > Makefile
+
+# Configure HMMER
+if [ -d "$DIRECTORY" ]; then
+	pushd .
+	cd src/hmmer-3.0
+	./configure
+	popd
+fi
