@@ -118,6 +118,36 @@ zutil_inf(FILE *dest, FILE *source, int *blks) {
 }
 
 
+/**
+ * Count blocks in file.  Could be extended to return avg blk size etc...
+ */
+int
+zutil_blk_cnt(FILE *source, int *blks) {
+  long bsz;
+
+  *blks = 0;
+  while (1) {
+    // Read block size
+    if (fread(&bsz,sizeof(bsz),1,source) != 1) {
+      if (feof(source)) {
+        // Ending at a file position reserved for a block
+        // size indicates completion.
+        return Z_OK;
+      }
+      return Z_DATA_ERROR;
+    }
+
+		// Now advance read pos to hopefully the next block (or EOF)
+		if (fseek(source, bsz, SEEK_CUR)) {
+			return Z_DATA_ERROR;
+		}
+    // Increment number of blocks count
+    (*blks)++;
+  }
+
+  return Z_OK;
+}
+
 
 // TODO: Replace error messages with status codes.
 // TODO: Replace exit() with return()

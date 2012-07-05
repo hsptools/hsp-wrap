@@ -12,6 +12,10 @@
    is an error reading or writing the files. */
 int zutil_inf(FILE *dest, FILE *source, int *blks);
 
+/* Count number of blocks in file source until stream ends.
+   returns Z_OK on success and Z_DATA_ERROR on erroneous data or file
+	 access issues. */
+int zutil_blk_cnt(FILE *source, int *blks);
 
 // Writes "sz" bytes from "source" to the stream "dest", compressing
 // the data first with zlib compression strength "level".

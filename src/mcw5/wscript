@@ -31,6 +31,7 @@ def build(bld):
     bld.program(source='gather.c', target='gather', use='zutils strutils')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
     bld.program(source='zextract.c', target='zextract', use='zutils')
+    bld.program(source='zstat.c', target='zstat', use='zutils')
 
     # MPI apps
     mpienv = bld.all_envs['mpicc']
