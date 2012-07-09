@@ -16,7 +16,7 @@
                      Avoid some compiler warnings for input and output buffers
    1.AV              Hacked to pieces by Aaron Vose; mostly to add input
                      support from files, and to allow the extraction of
-		     concatenated compressed blocks.
+                     concatenated compressed blocks.
    1.PG              Move to a utility library
 */
 
@@ -137,15 +137,43 @@ zutil_blk_cnt(FILE *source, int *blks) {
       return Z_DATA_ERROR;
     }
 
-		// Now advance read pos to hopefully the next block (or EOF)
-		if (fseek(source, bsz, SEEK_CUR)) {
-			return Z_DATA_ERROR;
-		}
+    // Now advance read pos to hopefully the next block (or EOF)
+    if (fseek(source, bsz, SEEK_CUR)) {
+      return Z_DATA_ERROR;
+    }
     // Increment number of blocks count
     (*blks)++;
   }
 
   return Z_OK;
+}
+
+
+/**
+ * Iterate over block descriptors.
+ * TODO: instead of int *bsz, use a struct where we can track multiple stats
+ *       as well as flag error cases
+ */
+int
+zutil_blk_iter(FILE *source, long *bsz) {
+  // Read block size
+  if (fread(bsz, sizeof(*bsz), 1, source) != 1) {
+    if (feof(source)) {
+      // End of file, done
+      return 0;
+    }
+    // Error, done (TODO: Flag error!)
+    return 0;
+  }
+
+  // Now advance read pos to hopefully the next block (or EOF)
+  if (fseek(source, *bsz, SEEK_CUR)) {
+    // Error, done (TODO: Flag error!)
+    return 0;
+  }
+
+  // Not done yet
+  return 1;
 }
 
 
@@ -160,7 +188,7 @@ zutil_compress_write(FILE *dest, void *source, int sz, int level) {
   int            rv,flush;
   unsigned       ndata;
   long           lenpos,len;
-  
+
   // Init zlib state
   strm.zalloc = Z_NULL;
   strm.zfree  = Z_NULL;

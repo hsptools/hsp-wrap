@@ -17,6 +17,11 @@ int zutil_inf(FILE *dest, FILE *source, int *blks);
 	 access issues. */
 int zutil_blk_cnt(FILE *source, int *blks);
 
+/* Iterate over block descriptors.
+ * places block size into bsz, and returns 1 if iterator is still valid
+ * otherwise, 0 is returned */
+int zutil_blk_iter(FILE *source, long *bsz);
+
 // Writes "sz" bytes from "source" to the stream "dest", compressing
 // the data first with zlib compression strength "level".
 //
