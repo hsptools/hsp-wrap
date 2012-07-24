@@ -24,7 +24,7 @@
 #include "mcw.h"
 
 #define UNUSED(param) (void)(param)
-
+#define MCW_BIN       "mcw"
 
 ////////////////////////////////////////////////////////////////////////////////
 //                               Global State                                 //
@@ -224,7 +224,7 @@ static void Abort(int arg)
 {
   // Make sure our shared memory segments are removed
   cleanup();
-  
+
   // Abort the MPI job
   MPI_Abort(MPI_COMM_WORLD,arg);
 }
@@ -475,15 +475,19 @@ static void Master(int processes, int rank)
     switch( mi->slaves[index].request.type ) {
     case RQ_WU:
       // Slave wants a work unit; send it to him
-			// Limit number of work units to a fair amount
-			blkseqs = mi->slaves[index].request.count;
-			if (blkseqs > max_req) {
-				Vprint(SEV_NRML,"Master: Slave %d requested %d units, limiting to %d.", index, blkseqs, max_req);
-				//blkseqs = max_req;
-			}
+
+      // Limit number of work units to a fair amount
+      blkseqs = mi->slaves[index].request.count;
+      if (blkseqs > max_req) {
+	Vprint(SEV_NRML,"Master: Slave %d requested %d units, limiting to %d.", index, blkseqs, max_req);
+	//blkseqs = max_req;
+      }
       sequence = Get_SequenceBlocks(&seqsz,&blkseqs);
-      mi->slaves[index].workunit.type = WU_TYPE_SEQS;
-      mi->slaves[index].workunit.len  = seqsz;
+
+      // Send work unit (inform of incoming sequence)
+      mi->slaves[index].workunit.type   = WU_TYPE_SEQS;
+      mi->slaves[index].workunit.len    = seqsz;
+      mi->slaves[index].workunit.blk_id = nseq;
       MPI_Isend(&(mi->slaves[index].workunit), sizeof(workunit_t), MPI_BYTE, 
                 mi->slaves[index].rank, TAG_WORKUNIT, MPI_COMM_WORLD,
                 &(mi->mpi_req[mi->nslaves+index]));
@@ -661,7 +665,7 @@ static void Worker_WriteResults(int *rndxs, int wid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int *rndxs)
+static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *rndxs)
 {
   struct timeval  st,et;
   int             status,w,i;
@@ -697,15 +701,16 @@ static float Worker_ChildIO(int rank, int pid, int wid, int qndx, int *rndxs)
       Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
 	     rank,wid);		
       // Log success
-      fprintf(SlaveInfo.log, "S    %s\n", log_id);
+      fprintf(SlaveInfo.log, "S\t%d\t%s\n", bid, log_id);
     } else {
       // There was an error with the child DB process
       Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
       if( WIFSIGNALED(status) ) {
 	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
+	fprintf(SlaveInfo.log, "E(SIGNAL,%d)\t%d\t%s\n", status, bid, log_id);
+      } else {
+	fprintf(SlaveInfo.log, "E(STATUS,%d)\t%d\t%s\n", status, bid, log_id);
       }
-      // Log failure
-      fprintf(SlaveInfo.log, "E(1) %s\n", log_id);
     } 
   }
 
@@ -843,7 +848,7 @@ static void Worker_Child_MapFDs(int rank, int wid)
 }
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int *rndxs)
+static float Worker_SearchDB(int rank, int procs, int wid, int bid, int qndx, int *rndxs)
 {
   char **argv;
   char  name[256],exe_name[256];
@@ -890,14 +895,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int *rndxs)
   sprintf(name,"%d",wid);
   setenv("MCW_WID",name,1);
 
-	// TODO: remove obsolete stuff
-  sprintf(name,"%s/%s%d",
-          args.db_path,args.db_prefix,node/loadstride);
-  setenv("BLASTMAT",name,1);
-  sprintf(name,"%s/%s%d",
-          args.db_path,args.db_prefix,node/loadstride);
-  setenv("BLASTDB",name,1);
-
   // Build a name for the exe
   sprintf(exe_name,"./%s",args.exe_base);
 
@@ -905,24 +902,33 @@ static float Worker_SearchDB(int rank, int procs, int wid, int qndx, int *rndxs)
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,qndx,rndxs);
+    io_time = Worker_ChildIO(rank,pid,wid,bid,qndx,rndxs);
   } else if( !pid ) {
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
+
     // Run the DB search
     if( execv(exe_name,argv) < 0 ) {
-      Vprint(SEV_ERROR,"Worker's child failed to exec DB.  Terminating.\n");
-      perror(0);
-      exit(1);
+      Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
+      perror(MCW_BIN);
+      fprintf(SlaveInfo.log, "E(EXEC,%d)\t%d\n", errno, bid);
+      sigusr_forkunlock(0);
     }
-    Vprint(SEV_ERROR,"Worker's child failed to exec DB!  Terminating.\n");
-    perror(0);
-    exit(1);
+    // FIXME: Is this code unreachable?
+    Vprint(SEV_ERROR,"Worker's child failed to exec DB! (unreachable?)\n");
+    perror(MCW_BIN);
+    Abort(0);
   } else {
     // fork() returned an error code
-    Vprint(SEV_ERROR,"Worker failed to start DB search. Terminating.\n");
-    Abort(1);
+    Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
+    perror(MCW_BIN);
+    fprintf(SlaveInfo.log, "E(FORK,%d)\t%d\n", errno, bid);
+    //log_error();
+    sigusr_forkunlock(0);
   }
+
+  // FIXME: This is overly aggressive
+  fflush(SlaveInfo.log);
 
   // Return the time it took to do IO.
   return io_time;
@@ -1137,7 +1143,7 @@ static void* Worker(void *arg)
       for( f=0; f<SlaveInfo.nout_files; ++f ) {
 	file_sizes->fs[r[f]].size = 0;
       }
-      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, q, r);
+      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, workunit->blk_id, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
@@ -1824,7 +1830,7 @@ static void Slave(int processes, int rank)
   compressedb_t  *cb;
   workunit_t     *workunit;
   request_t      *request;
-  int             qd=0,i,sz;
+  int             qd=0,i,sz,base_id;
 
   gettimeofday(&tv, NULL);
   Vprint(SEV_TIMING,"[TIMING] Slave %d started at %d.%06d.\n",
@@ -1906,16 +1912,18 @@ static void Slave(int processes, int rank)
       GrowSeqData(workunit->len+1);
       MPI_Recv(si->seq_data, workunit->len, MPI_BYTE, MASTER_RANK, 
                TAG_SEQDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-      sz = workunit->len;
+      sz      = workunit->len;
+      base_id = workunit->blk_id;
       tscq_entry_free(si->wq,workunit);
       // Break up the larger work unit into smaller units
       // and send them to worker threads.
       for(i=0,cb=(compressedb_t*)si->seq_data; cb<(compressedb_t*)(si->seq_data+sz); cb=((void*)cb)+cb->len+sizeof(cb->len),i++) {
         // Get queue entry, fill it, and dispatch it
         workunit = tscq_entry_new(si->wq);
-        workunit->type = WU_TYPE_SEQF;
-        workunit->len  = cb->len+sizeof(cb->len);
-        workunit->data = safe_malloc(workunit->len);
+        workunit->type   = WU_TYPE_SEQF;
+        workunit->len    = cb->len+sizeof(cb->len);
+	workunit->blk_id = base_id + i;
+        workunit->data   = safe_malloc(workunit->len);
         if( !workunit->data ) {
           Vprint(SEV_ERROR,"Slave failed to allocate work unit data for worker. Terminating.\n");
           Abort(1);
@@ -2467,12 +2475,12 @@ static void sighndler(int arg)
     write(2,"ms: Caught signal; cleaning up.\n",32);
   }
 
-	Master_Flush();
+  Master_Flush();
   cleanup();
   kill(getpid(), SIGKILL);
 }
 
-static void sigusr_forkunlock(int arg)
+void sigusr_forkunlock(int arg)
 {
   UNUSED(arg);
   pthread_mutex_unlock(&(SlaveInfo.fork_lock));

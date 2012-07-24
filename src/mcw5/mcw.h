@@ -26,7 +26,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_TIMING
+#define VERBOSITY   SEV_NRML
 
 
 // Maximum number of DB files
@@ -88,9 +88,16 @@ typedef struct {
 typedef struct st_workunit {
   int    type;      // Member of WU_TYPE_*
   int    len;       // Length of all query sequences
+  // Refactor the remaining fields.
+  // ID is only used for WU_TYPE_SEQ
+  // DATA is not even used in flight, only in slave queues
+  int    blk_id;    // Id for first block in the work-unit
   char  *data;      // Pointer to work unit data
 } workunit_t;
 
+typedef struct st_seq_header {
+  int id;
+} seq_header_t;
 
 // Sequence data to follow work unit
 typedef char* seq_data_t;
