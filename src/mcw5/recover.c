@@ -31,6 +31,10 @@ static int   stat_flag;
 static int   append_flag;
 // Flag set by '--force', overwrite output files, if exist
 static int   force_flag;
+// Directory containing log files
+static char *directory_opt;
+// Prefix for output files
+static char *prefix_opt;
 
 // Name of program (recover)
 static char *program_name;
@@ -58,7 +62,22 @@ print_version ()
 static void
 print_usage ()
 {
-  printf("Usage: %s [OPTION]... DIRECTORY\n", program_name);
+  printf("Usage: %s [OPTION]... INPUT_FILE\n", program_name);
+  puts("\
+HSP Recover aids in the resumption of a failed or incomplete job by creating\n\
+a new input file appropriate for resubmission.  At the very least, a directory\n\
+containing log files and the the original compressed input file is required.\n\n\
+Options:\n\
+  -a, --append    append to output files if they already exist\n\
+  -d, --directory the directory to use when searching for log files\n\
+  -f, --force     forcibly overwrite output files if they already exist\n\
+  -n, --dry-run   don't actually write output files; just print them\n\
+  -s, --stat      show stats after processing files\n\
+  -v, --verbose   verbosely list files processed\n\
+      --help      display this help and exit\n\
+      --version   output version information and exit\n\n\
+Report bugs to <pgiblock@utk.edu>\
+");
 }
 
 // Die with error about log line
@@ -176,7 +195,7 @@ open_output (const char *fpath)
     flags |= O_APPEND;
   }
 
-  fd = open(fpath, flags, S_IRUSR|S_IWUSR|S_IRGRP|S_IWUSR);
+  fd = open(fpath, flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IWUSR);
 
   if (fd < 0) {
     if (errno == EEXIST) {
@@ -198,13 +217,14 @@ main (int argc, char **argv)
   
   program_name = argv[0];
 
+  // Option defaults
+  directory_opt = ".";
+
   while (1) {
     static struct option long_options[] =
     {
-      // These options set a flag.
-      {"verbose", no_argument,       &verbose_flag, 1},
-      {"brief",   no_argument,       &verbose_flag, 0},
-      // These options don't set a flag. We distinguish them by their indices.
+      {"verbose",   no_argument,      &verbose_flag, 1},
+      {"brief",     no_argument,      &verbose_flag, 0},
       {"append",    no_argument,       0, 'a'},
       {"dry-run",   no_argument,       0, 'n'},
       {"force",     no_argument,       0, 'f'},
@@ -243,7 +263,7 @@ main (int argc, char **argv)
 	break;
 
       case 'd':
-	printf("option -d with value `%s'\n", optarg);
+	directory_opt = optarg;
 	break;
 
       case 'n':
@@ -281,10 +301,15 @@ main (int argc, char **argv)
     }
   }
 
+  // Verify number of parameters
+  if (optind == argc) {
+    error(EXIT_FAILURE, 0, "Missing input filename");
+  } else if (optind != argc-1) {
+    error(EXIT_FAILURE, 0, "Too many parameters");
+  }
+
   // Path to compressed file
   char *zfile_path  = argv[optind];
-  // Path to directory containing 'log' files
-  char *log_dirname = argv[optind+1];
 
   // The actual compressed blocks (input)
   char  *blocks;
@@ -341,8 +366,7 @@ main (int argc, char **argv)
   }
 
   // Load log entries
-  // TODO --directory option
-  nftw(log_dirname, peek_dir, 10, 0);
+  nftw(directory_opt, peek_dir, 10, 0);
 
   nresume = nfailed = nsuccessful = 0;
 
