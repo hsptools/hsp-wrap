@@ -27,6 +27,9 @@ def build(bld):
     bld.program(source='recovermol2.cc', target='recovermol2',
             features='cxx cxxprogram')
 
+    # Block-wise recovery
+    bld.program(source='recover.c', target='recover')
+
     # Special tools
     bld.program(source='gather.c', target='gather', use='zutils strutils')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
