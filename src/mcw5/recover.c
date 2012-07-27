@@ -16,8 +16,22 @@
 // Initial size of the history buffer, in entries
 #define INITIAL_HISTORY_SIZE 1024
 
+// Default output filenames
+#define RESUME_FILE "recovery-resume"
+#define FAILED_FILE "recovery-failed"
+#define SUCCESS_FILE "recovery-success"
+
 // Flag set by '--verbose'
 static int   verbose_flag;
+// Flag set by '--dry-run', do we only collect stats
+static int   dry_run_flag;
+// Flag set by '--stat', display statistics
+static int   stat_flag;
+// Flag set by '--append', append results to output files, if exist
+static int   append_flag;
+// Flag set by '--force', overwrite output files, if exist
+static int   force_flag;
+
 // Name of program (recover)
 static char *program_name;
 
@@ -53,7 +67,7 @@ static void
 die_line (int errnum, const char *fpath, unsigned int line_number)
 {
   error(EXIT_FAILURE, errnum, "%s: %u: improperly formatted log file",
-      fpath, line_number);
+        fpath, line_number);
 }
 
 // Read a single log file
@@ -145,6 +159,36 @@ peek_dir (const char *fpath, const struct stat *sb,
   return 0;
 }
 
+// Open an output file for writing, obeying current flags
+
+static int
+open_output (const char *fpath)
+{
+  int flags = O_CREAT | O_WRONLY;
+  int fd;
+
+  // If not forced, then error if file exists
+  if (!force_flag) {
+    flags |= O_EXCL;
+  }
+  // Append if request
+  if (append_flag) {
+    flags |= O_APPEND;
+  }
+
+  fd = open(fpath, flags, S_IRUSR|S_IWUSR|S_IRGRP|S_IWUSR);
+
+  if (fd < 0) {
+    if (errno == EEXIST) {
+      error(EXIT_FAILURE, 0, "%s: file exists, use --force to overwrite", fpath);
+    } else {
+      error(EXIT_FAILURE, 0, "%s: open failed", fpath);
+    }
+  }
+
+  return fd;
+}
+
 ////////
 
 int
@@ -161,16 +205,20 @@ main (int argc, char **argv)
       {"verbose", no_argument,       &verbose_flag, 1},
       {"brief",   no_argument,       &verbose_flag, 0},
       // These options don't set a flag. We distinguish them by their indices.
-      {"add",     no_argument,       0, 'a'},
-      {"delete",  required_argument, 0, 'd'},
-      {"help",    no_argument,       0, '#'},
-      {"version", no_argument,       0, '^'},
+      {"append",    no_argument,       0, 'a'},
+      {"dry-run",   no_argument,       0, 'n'},
+      {"force",     no_argument,       0, 'f'},
+      {"directory", required_argument, 0, 'd'},
+      {"prefix",    required_argument, 0, 'p'},
+      {"stat",      no_argument,       0, 's'},
+      {"help",      no_argument,       0, '#'},
+      {"version",   no_argument,       0, '^'},
       {0, 0, 0, 0}
     };
 
     int option_index = 0;
 
-    c = getopt_long(argc, argv, "ad:",
+    c = getopt_long(argc, argv, "ad:fpP:s",
 	long_options, &option_index);
 
     // Detect the end of the options.
@@ -191,11 +239,27 @@ main (int argc, char **argv)
 	break;
 
       case 'a':
-	puts("option -a\n");
+	append_flag = 1;
 	break;
 
       case 'd':
 	printf("option -d with value `%s'\n", optarg);
+	break;
+
+      case 'n':
+	dry_run_flag = 1;
+	break;
+
+      case 'f':
+	force_flag = 1;
+	break;
+
+      case 'p':
+	printf("option -p with value `%s'\n", optarg);
+	break;
+
+      case 's':
+	stat_flag = 1;
 	break;
 
       case '?':
@@ -227,9 +291,11 @@ main (int argc, char **argv)
   // Size of the compressed blocks mmap region
   size_t blocks_size;
   // Output files
-  FILE *resume_file;
-  FILE *failed_file;
-  FILE *successful_file;
+  int resume_fd;
+  int failed_fd;
+  int successful_fd;
+  // Counts
+  unsigned int nresume, nfailed, nsuccessful;
 
   // Initial history buffer - resizes later if needed
   history_size = INITIAL_HISTORY_SIZE;
@@ -241,14 +307,10 @@ main (int argc, char **argv)
   memset(history, 0, history_size);
 
   // Open output files
-  if (!(resume_file = fopen("recovery-resume.cmol2", "w"))) {
-    error (EXIT_FAILURE, errno, "open failed: %s", "recovery-resume.cmol2");
-  }
-  if (!(failed_file = fopen("recovery-failed.cmol2", "w"))) {
-    error (EXIT_FAILURE, errno, "open failed: %s", "recovery-failed.cmol2");
-  }
-  if (!(successful_file = fopen("recovery-successful.cmol2", "w"))) {
-    error (EXIT_FAILURE, errno, "open failed: %s", "recovery-successful.cmol2");
+  if (!dry_run_flag) {
+    resume_fd = open_output(RESUME_FILE);
+    failed_fd = open_output(FAILED_FILE);
+    successful_fd = open_output(SUCCESS_FILE);
   }
 
   // Open compressed file
@@ -282,6 +344,8 @@ main (int argc, char **argv)
   // TODO --directory option
   nftw(log_dirname, peek_dir, 10, 0);
 
+  nresume = nfailed = nsuccessful = 0;
+
   // Actually copy blocks around
   {
     char *i, status;
@@ -289,7 +353,7 @@ main (int argc, char **argv)
     unsigned int block_id;
 
     if (verbose_flag) {
-      printf("Copying blocks...\n");
+      printf("Handling input...\n");
     }
     
     // Now, Read through the compressed input
@@ -309,13 +373,16 @@ main (int argc, char **argv)
       // Write block to appropriate file
       switch (status) {
 	case 'S':
-	  fwrite(i, 1, block_size, successful_file);
+	  if (!dry_run_flag) write(successful_fd, i, block_size);
+	  ++nsuccessful;
 	  break;
 	case 'E':
-	  fwrite(i, 1, block_size, failed_file);
+	  if (!dry_run_flag) write(failed_fd, i, block_size);
+	  ++nfailed;
 	  break;
 	case 0:
-	  fwrite(i, 1, block_size, resume_file);
+	  if (!dry_run_flag) write(resume_fd, i, block_size);
+	  ++nresume;
 	  break;
 	default:
 	  if (isprint(status)) {
@@ -333,15 +400,22 @@ main (int argc, char **argv)
   }
 
   // Cleanup
-  fclose(resume_file);
-  fclose(failed_file);
-  fclose(successful_file);
+  if (!dry_run_flag) {
+    close(resume_fd);
+    close(failed_fd);
+    close(successful_fd);
+  }
 
   munmap(blocks, blocks_size);
   
   free(history);
 
-  // TODO: Display stats
+  // Display stats
+  if (dry_run_flag || stat_flag) {
+    printf("Successful: %8d\n", nsuccessful);
+    printf("Failed:     %8d\n", nfailed);
+    printf("Resumable:  %8d\n", nresume);
+  }
 
   exit(0);
 }
