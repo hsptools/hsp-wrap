@@ -1,45 +1,88 @@
 #define _XOPEN_SOURCE 500
+#include <errno.h>
+#include <error.h>
 #include <ftw.h>
+#include <getopt.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "strutils.h"
 #include "zutils.h"
 
-#define NARGS 2
-
 // Filename of output files (query)
-char *fn_base;
+static char *fn_base;
+// Flag set by '--ignore-errors'
+static int   ignore_errors_flag;
+// Directory containing result files
+static char *directory_opt;
+// Name of output file
+static char *output_opt;
+
+// Name of program (recover)
+static char *program_name;
 
 static void
-print_usage(FILE *f) {
-  fprintf(f, "\nUsage: gather DIR FILENAME\n\n");
-  fprintf(f, "Gather and decompress all results for file FILENAME in mcw job \n"
-             "output directory, DIR, and output the results to standard output.\n\n");
-  fprintf(f, "Example: gather job-foo out > foo.results\n");
+print_version ()
+{
+  puts("HSP Gather 1.0.0");
+  puts("Copyright (C) 2012 National Institute for Computational Sciences");
+  puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>");
+  puts("This is free software: you are free to change and redistribute it.");
+  puts("There is NO WARRANTY, to the extent permitted by law.\n");
+  puts("Written by Paul Giblock.");
+}
+
+static void
+print_usage ()
+{
+  printf("Usage: gather %s [OPTION]... FILENAME\n", program_name);
+  puts("\
+HSP Gather is the standard way to coalesce the output results of a\n\
+completed HSP job.  The resulting output files with the name FILENAME are\n\
+decompressed and concatenated to standard output, unless the -o option\n\
+is specified.\n\n\
+Options:\n\
+  -d, --directory=DIR the directory to use when searching for result files\n\
+  -o, --output=FILE   write to output file instead of standard output\n\
+  -i, --ignore-errors print a warning instead of failing if errors occur\n\
+      --help          display this help and exit\n\
+      --version       display version information and exit\n\n\
+Report bugs to <pgiblock@utk.edu>\
+");
 }
 
 
 static int
-print_file(const char *fpath) {
+print_file (const char *fpath)
+{
   FILE *f;
   int blks;
 
   if (!(f = fopen(fpath, "r"))) {
-    fprintf(stderr, "gather: could not open \"%s\".  Skipping.\n", fpath);
-    return 0;
+    if (ignore_errors_flag) {
+      error(0, errno, "%s: open failed, skipping", fpath);
+      return 0;
+    } else {
+      error(EXIT_FAILURE, errno, "%s: open failed", fpath);
+    }
   }
 
   // Decompress the file
   if (zutil_inf(stdout, f, &blks) != Z_OK) {
-    fprintf(stderr, "gather: error while extracting \"%s\".  Skipping.\n", fpath);
-    return 0;
+    if (ignore_errors_flag) {
+      error(0, errno, "%s: extraction failed, skipping", fpath);
+      return 0;
+    } else {
+      error(EXIT_FAILURE, errno, "%s: extraction failed", fpath);
+    }
+    return 1;
   }
-  return 1;
 }
 
 
 static int
-peek_dir(const char *fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf) {
+peek_dir(const char *fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf)
+{
   if (tflag == FTW_F && str_ends_with(fpath+ftwbuf->base, fn_base)) {
     print_file(fpath);
   }
@@ -48,35 +91,89 @@ peek_dir(const char *fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf
 
 
 int
-main(int argc, char **argv) {
-  char *path;
-
+main(int argc, char **argv)
+{
+  int c;
   struct stat st;
 
-  if (argc == NARGS+1) {
-    // Path to job directory
-    path = argv[1];
-    // Filename of output files
-    fn_base = argv[2];
+  program_name = argv[0];
 
-    // Directory exists?
-    if (!stat(path, &st)) {
-      if (S_ISDIR(st.st_mode)) {
-        // Do it
-        nftw(path, peek_dir, 100, 0);
-        return 0;
-      }
-    }  
+  // Option defaults
+  directory_opt = ".";
 
-    // If we got here, finding the directory failed
-    fprintf(stderr, "gather: directory doesn't exist.\n");
-    fprintf(stderr, "gather: argument must be an existing output directory.\n");
-  } else if (argc < NARGS+1) {
-    fprintf(stderr, "gather: too few arguments, %d required\n", NARGS);
-  } else {
-    fprintf(stderr, "gather: too many arguments, %d required\n", NARGS);
+  while (1) {
+    static struct option long_options[] =
+    {
+      {"directory",     required_argument, 0, 'd'},
+      {"output",        required_argument, 0, 'o'},
+      {"ignore-errors", no_argument,       0, 'i'},
+      {"help",          no_argument,       0, '#'},
+      {"version",       no_argument,       0, '^'},
+      {0, 0, 0, 0}
+    };
+
+    int option_index = 0;
+
+    c = getopt_long(argc, argv, "d:o:i",
+	long_options, &option_index);
+
+    // Detect the end of the options.
+    if (c == -1) {
+      break;
+    }
+
+    switch (c) {
+      case 'd':
+	directory_opt = optarg;
+	break;
+
+      case 'o':
+	output_opt = optarg;
+	break;
+
+      case 'i':
+	ignore_errors_flag = 1;
+	break;
+
+      case '?':
+	printf("Try '%s --help' for more information.\n", program_name);
+	exit(EXIT_FAILURE);
+	break;
+
+      case '#':
+	print_usage();
+	exit(EXIT_SUCCESS);
+	break;
+
+      case '^':
+	print_version();
+	exit(EXIT_SUCCESS);
+	break;
+
+      default:
+	abort();
+    }
   }
 
-  print_usage(stderr);
-  return 100;
+  // Verify number of parameters
+  if (optind == argc) {
+    error(EXIT_FAILURE, 0, "Missing input filename");
+  } else if (optind != argc-1) {
+    error(EXIT_FAILURE, 0, "Too many parameters");
+  }
+
+  // Path to compressed file
+  fn_base = argv[optind];
+
+  // Directory exists?
+  if (!stat(directory_opt, &st)) {
+    if (S_ISDIR(st.st_mode)) {
+      // Do it
+      nftw(directory_opt, peek_dir, 100, 0);
+      return EXIT_SUCCESS;
+    }
+  }  
+
+  // If we got here, finding the directory failed
+  error(EXIT_FAILURE, 0, "%s: directory doesn't exist", directory_opt);
 }

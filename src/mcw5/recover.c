@@ -16,11 +16,6 @@
 // Initial size of the history buffer, in entries
 #define INITIAL_HISTORY_SIZE 1024
 
-// Default output filenames
-#define RESUME_FILE "recovery-resume"
-#define FAILED_FILE "recovery-failed"
-#define SUCCESS_FILE "recovery-success"
-
 // Flag set by '--verbose'
 static int   verbose_flag;
 // Flag set by '--dry-run', do we only collect stats
@@ -68,14 +63,15 @@ HSP Recover aids in the resumption of a failed or incomplete job by creating\n\
 a new input file appropriate for resubmission.  At the very least, a directory\n\
 containing log files and the the original compressed input file is required.\n\n\
 Options:\n\
-  -a, --append    append to output files if they already exist\n\
-  -d, --directory the directory to use when searching for log files\n\
-  -f, --force     forcibly overwrite output files if they already exist\n\
-  -n, --dry-run   don't actually write output files; just print them\n\
-  -s, --stat      show stats after processing files\n\
-  -v, --verbose   verbosely list files processed\n\
-      --help      display this help and exit\n\
-      --version   output version information and exit\n\n\
+  -a, --append        append to output files if they already exist\n\
+  -d, --directory=DIR the directory to use when searching for log files\n\
+  -f, --force         forcibly overwrite output files if they already exist\n\
+  -n, --dry-run       don't actually write output files; just print them\n\
+  -p, --prefix=PREFIX path prefix for output files\n\
+  -s, --stat          show stats after processing files\n\
+  -v, --verbose       verbosely list files processed\n\
+      --help          display this help and exit\n\
+      --version       output version information and exit\n\n\
 Report bugs to <pgiblock@utk.edu>\
 ");
 }
@@ -105,7 +101,7 @@ read_log (const char *fpath)
 
   log_file = fopen(fpath, "rt");
   if (!log_file) {
-    error (EXIT_FAILURE, errno, "open failed: %s", fpath);
+    error (EXIT_FAILURE, errno, "%s: open failed", fpath);
   }
 
   line_number = 0;
@@ -219,6 +215,7 @@ main (int argc, char **argv)
 
   // Option defaults
   directory_opt = ".";
+  prefix_opt    = "recovery-";
 
   while (1) {
     static struct option long_options[] =
@@ -275,7 +272,7 @@ main (int argc, char **argv)
 	break;
 
       case 'p':
-	printf("option -p with value `%s'\n", optarg);
+	prefix_opt = optarg;
 	break;
 
       case 's':
@@ -283,7 +280,8 @@ main (int argc, char **argv)
 	break;
 
       case '?':
-	printf("Try '%s --help' for more information.", program_name);
+	printf("Try '%s --help' for more information.\n", program_name);
+	exit(EXIT_FAILURE);
 	break;
 
       case '#':
@@ -333,9 +331,19 @@ main (int argc, char **argv)
 
   // Open output files
   if (!dry_run_flag) {
-    resume_fd = open_output(RESUME_FILE);
-    failed_fd = open_output(FAILED_FILE);
-    successful_fd = open_output(SUCCESS_FILE);
+    size_t fn_buf_size = strlen(prefix_opt) + 20;
+    char *fn_buf = malloc(fn_buf_size);
+
+    snprintf(fn_buf, fn_buf_size, "%s-resume", prefix_opt);
+    resume_fd = open_output(fn_buf);
+
+    snprintf(fn_buf, fn_buf_size, "%s-failed", prefix_opt);
+    failed_fd = open_output(fn_buf);
+
+    snprintf(fn_buf, fn_buf_size, "%s-success", prefix_opt);
+    successful_fd = open_output(fn_buf);
+
+    free(fn_buf);
   }
 
   // Open compressed file
@@ -346,12 +354,12 @@ main (int argc, char **argv)
    
     zfile = open(zfile_path, O_RDONLY);
     if (zfile < 0) {
-      error (EXIT_FAILURE, errno, "open failed: %s", zfile_path);
+      error (EXIT_FAILURE, errno, "%s: open failed", zfile_path);
     }
 
     if (fstat(zfile, &zfile_st) < 0) {
       close(zfile);
-      error (EXIT_FAILURE, errno, "stat failed: %s", zfile_path);
+      error (EXIT_FAILURE, errno, "%s: stat failed", zfile_path);
     }
 
     blocks_size = zfile_st.st_size;
@@ -361,7 +369,7 @@ main (int argc, char **argv)
     close(zfile);
 
     if (blocks == MAP_FAILED) {
-      error (EXIT_FAILURE, errno, "mmap failed: %s", zfile_path);
+      error (EXIT_FAILURE, errno, "%s: mmap failed", zfile_path);
     }
   }
 
