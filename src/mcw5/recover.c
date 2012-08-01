@@ -13,6 +13,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "version.h"
+
+#define PACKAGE_NAME "HSP Recover"
+#define AUTHORS "Paul Giblock"
+#define VERSION "1.0.0"
+
 // Initial size of the history buffer, in entries
 #define INITIAL_HISTORY_SIZE 1024
 
@@ -39,19 +45,7 @@ char  *history;
 // Size of the history buffer
 size_t history_size;
 // Maximum block-id encountered so far
-int    max_block_id;
-
-
-static void
-print_version ()
-{
-  puts("HSP Recover 1.0.0");
-  puts("Copyright (C) 2012 National Institute for Computational Sciences");
-  puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>");
-  puts("This is free software: you are free to change and redistribute it.");
-  puts("There is NO WARRANTY, to the extent permitted by law.\n");
-  puts("Written by Paul Giblock.");
-}
+unsigned int max_block_id;
 
 
 static void
@@ -65,8 +59,8 @@ containing log files and the the original compressed input file is required.\n\n
 Options:\n\
   -a, --append        append to output files if they already exist\n\
   -d, --directory=DIR the directory to use when searching for log files\n\
-  -f, --force         forcibly overwrite output files if they already exist\n\
   -n, --dry-run       don't actually write output files; just print them\n\
+  -f, --force         forcibly overwrite output files if they already exist\n\
   -p, --prefix=PREFIX path prefix for output files\n\
   -s, --stat          show stats after processing files\n\
   -v, --verbose       verbosely list files processed\n\
@@ -289,10 +283,7 @@ main (int argc, char **argv)
 	exit(EXIT_SUCCESS);
 	break;
 
-      case '^':
-	print_version();
-	exit(EXIT_SUCCESS);
-	break;
+      case_GETOPT_VERSION;
 
       default:
 	abort();
@@ -417,11 +408,7 @@ main (int argc, char **argv)
 	  ++nresume;
 	  break;
 	default:
-	  if (isprint(status)) {
-	    fprintf(stderr, "Unknown block status: %d (%c)\n", status, status);
-	  } else {
-	    fprintf(stderr, "Unknown block status: %d\n", status);
-	  }
+	  fprintf(stderr, "Unknown block status: %d\n", status);
 	  abort();
       }
     }

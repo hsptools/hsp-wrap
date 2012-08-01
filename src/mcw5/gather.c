@@ -7,7 +7,12 @@
 #include <stdlib.h>
 
 #include "strutils.h"
+#include "version.h"
 #include "zutils.h"
+
+#define PACKAGE_NAME "HSP Gather"
+#define AUTHORS "Paul Giblock"
+#define VERSION "1.0.0"
 
 // Filename of output files (query)
 static char *fn_base;
@@ -22,17 +27,6 @@ static char *output_opt;
 static char *program_name;
 
 static void
-print_version ()
-{
-  puts("HSP Gather 1.0.0");
-  puts("Copyright (C) 2012 National Institute for Computational Sciences");
-  puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>");
-  puts("This is free software: you are free to change and redistribute it.");
-  puts("There is NO WARRANTY, to the extent permitted by law.\n");
-  puts("Written by Paul Giblock.");
-}
-
-static void
 print_usage ()
 {
   printf("Usage: gather %s [OPTION]... FILENAME\n", program_name);
@@ -43,8 +37,8 @@ decompressed and concatenated to standard output, unless the -o option\n\
 is specified.\n\n\
 Options:\n\
   -d, --directory=DIR the directory to use when searching for result files\n\
-  -o, --output=FILE   write to output file instead of standard output\n\
   -i, --ignore-errors print a warning instead of failing if errors occur\n\
+  -o, --output=FILE   write to output file instead of standard output\n\
       --help          display this help and exit\n\
       --version       display version information and exit\n\n\
 Report bugs to <pgiblock@utk.edu>\
@@ -75,8 +69,8 @@ print_file (const char *fpath)
     } else {
       error(EXIT_FAILURE, errno, "%s: extraction failed", fpath);
     }
-    return 1;
   }
+  return 1;
 }
 
 
@@ -145,10 +139,7 @@ main(int argc, char **argv)
 	exit(EXIT_SUCCESS);
 	break;
 
-      case '^':
-	print_version();
-	exit(EXIT_SUCCESS);
-	break;
+      case_GETOPT_VERSION;
 
       default:
 	abort();
@@ -176,4 +167,5 @@ main(int argc, char **argv)
 
   // If we got here, finding the directory failed
   error(EXIT_FAILURE, 0, "%s: directory doesn't exist", directory_opt);
+  return EXIT_FAILURE;
 }

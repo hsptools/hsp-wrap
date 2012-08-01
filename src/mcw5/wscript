@@ -9,29 +9,27 @@ def build(bld):
     # Libraries
     bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
     bld.stlib(source='strutils.c', target='strutils')
+    bld.stlib(source='version.c', target='version')
 
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
         bld.program(source='%s.c'%t, target=t)
 
     bld.program(source='compressfasta.c', target='compressfasta',
-            use='zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
+            use='version zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
     bld.program(source='compressfasta.c', target='compressfasta0',
-            use='zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
-    bld.program(source='recoverfasta.cc', target='recoverfasta',
-            features='cxx cxxprogram')
+            use='version zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
+    bld.program(source='splitfasta.c', target='splitfasta')
 
     # MOL2 tools
-    bld.program(source='splitmol2.c', target='splitmol2')
     bld.program(source='compressmol2.c', target='compressmol2', use='zutils')
-    bld.program(source='recovermol2.cc', target='recovermol2',
-            features='cxx cxxprogram')
+    bld.program(source='splitmol2.c', target='splitmol2')
 
     # Block-wise recovery
-    bld.program(source='recover.c', target='recover')
+    bld.program(source='recover.c', target='recover', use='version')
 
     # Special tools
-    bld.program(source='gather.c', target='gather', use='zutils strutils')
+    bld.program(source='gather.c', target='gather', use='zutils strutils version')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
     bld.program(source='zextract.c', target='zextract', use='zutils')
     bld.program(source='zstat.c', target='zstat', use='zutils')
