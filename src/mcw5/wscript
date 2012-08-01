@@ -7,9 +7,10 @@ from waflib import Logs
 def build(bld):
 
     # Libraries
-    bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
+    bld.stlib(source='ioutils.c', target='ioutils')
     bld.stlib(source='strutils.c', target='strutils')
     bld.stlib(source='version.c', target='version')
+    bld.stlib(source='zutils.c', target='zutils', use='ZLIB')
 
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
@@ -26,12 +27,13 @@ def build(bld):
     bld.program(source='splitmol2.c', target='splitmol2')
 
     # Block-wise recovery
-    bld.program(source='recover.c', target='recover', use='version')
+    bld.program(source='recover.c', target='recover', use='ioutils version')
 
     # Special tools
-    bld.program(source='gather.c', target='gather', use='zutils strutils version')
+    bld.program(source='gather.c', target='gather', use='ioutils strutils version zutils')
     bld.program(source='xmlparse.c', target='xmlparse', use='EXPAT')
     bld.program(source='zextract.c', target='zextract', use='zutils')
+    bld.program(source='zsplit.c', target='zsplit', use='ioutils version')
     bld.program(source='zstat.c', target='zstat', use='zutils')
 
     # MPI apps

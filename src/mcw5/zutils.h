@@ -2,7 +2,13 @@
 #define HSP_ZUTILS_H__
 
 #include <stdio.h> // FILE
-#include <zlib.h>  // Z_* return codes
+#include <zlib.h>  // Z_* return codes TODO: abstract
+
+typedef struct
+{
+  off_t  offset;
+  size_t size;
+} zutil_block_info_t;
 
 /* Decompress from file source to file dest until stream ends or EOF.
    inf() returns Z_OK on success, Z_MEM_ERROR if memory could not be

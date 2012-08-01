@@ -20,11 +20,16 @@ static char *fn_base;
 static int   ignore_errors_flag;
 // Directory containing result files
 static char *directory_opt;
+// Flag set by '--force', overwrite output files, if exist
+static int   force_flag;
 // Name of output file
 static char *output_opt;
 
 // Name of program (recover)
 static char *program_name;
+
+// Output file
+FILE *out;
 
 static void
 print_usage ()
@@ -37,6 +42,7 @@ decompressed and concatenated to standard output, unless the -o option\n\
 is specified.\n\n\
 Options:\n\
   -d, --directory=DIR the directory to use when searching for result files\n\
+  -f, --force         forcibly overwrite output file if it already exists\n\
   -i, --ignore-errors print a warning instead of failing if errors occur\n\
   -o, --output=FILE   write to output file instead of standard output\n\
       --help          display this help and exit\n\
@@ -62,7 +68,7 @@ print_file (const char *fpath)
   }
 
   // Decompress the file
-  if (zutil_inf(stdout, f, &blks) != Z_OK) {
+  if (zutil_inf(out, f, &blks) != Z_OK) {
     if (ignore_errors_flag) {
       error(0, errno, "%s: extraction failed, skipping", fpath);
       return 0;
@@ -108,7 +114,7 @@ main(int argc, char **argv)
 
     int option_index = 0;
 
-    c = getopt_long(argc, argv, "d:o:i",
+    c = getopt_long(argc, argv, "d:o:fi",
 	long_options, &option_index);
 
     // Detect the end of the options.
@@ -123,6 +129,10 @@ main(int argc, char **argv)
 
       case 'o':
 	output_opt = optarg;
+	break;
+
+      case 'f':
+	force_flag = 1;
 	break;
 
       case 'i':
@@ -151,6 +161,13 @@ main(int argc, char **argv)
     error(EXIT_FAILURE, 0, "Missing input filename");
   } else if (optind != argc-1) {
     error(EXIT_FAILURE, 0, "Too many parameters");
+  }
+
+  // Open output file (or stdout)
+  if (output_opt) {
+    out = fdopen(ioutil_open_w(output_opt, force_flag, 0), "w");
+  } else {
+    out = stdout;
   }
 
   // Path to compressed file

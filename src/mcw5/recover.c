@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "ioutils.h"
 #include "version.h"
 
 #define PACKAGE_NAME "HSP Recover"
@@ -168,35 +169,6 @@ peek_dir (const char *fpath, const struct stat *sb,
   return 0;
 }
 
-// Open an output file for writing, obeying current flags
-
-static int
-open_output (const char *fpath)
-{
-  int flags = O_CREAT | O_WRONLY;
-  int fd;
-
-  // If not forced, then error if file exists
-  if (!force_flag) {
-    flags |= O_EXCL;
-  }
-  // Append if request
-  if (append_flag) {
-    flags |= O_APPEND;
-  }
-
-  fd = open(fpath, flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IWUSR);
-
-  if (fd < 0) {
-    if (errno == EEXIST) {
-      error(EXIT_FAILURE, 0, "%s: file exists, use --force to overwrite", fpath);
-    } else {
-      error(EXIT_FAILURE, 0, "%s: open failed", fpath);
-    }
-  }
-
-  return fd;
-}
 
 ////////
 
@@ -294,7 +266,7 @@ main (int argc, char **argv)
   // The actual compressed blocks (input)
   char  *blocks;
   // Size of the compressed blocks mmap region
-  size_t blocks_size;
+  off_t  blocks_size;
   // Output files
   int resume_fd;
   int failed_fd;
@@ -317,43 +289,19 @@ main (int argc, char **argv)
     char *fn_buf = malloc(fn_buf_size);
 
     snprintf(fn_buf, fn_buf_size, "%s-resume", prefix_opt);
-    resume_fd = open_output(fn_buf);
+    resume_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
 
     snprintf(fn_buf, fn_buf_size, "%s-failed", prefix_opt);
-    failed_fd = open_output(fn_buf);
+    failed_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
 
     snprintf(fn_buf, fn_buf_size, "%s-success", prefix_opt);
-    successful_fd = open_output(fn_buf);
+    successful_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
 
     free(fn_buf);
   }
 
   // Open compressed file
-  // TODO: Make utility function for mmaping. 
-  {
-    int zfile;
-    struct stat zfile_st;
-   
-    zfile = open(zfile_path, O_RDONLY);
-    if (zfile < 0) {
-      error (EXIT_FAILURE, errno, "%s: open failed", zfile_path);
-    }
-
-    if (fstat(zfile, &zfile_st) < 0) {
-      close(zfile);
-      error (EXIT_FAILURE, errno, "%s: stat failed", zfile_path);
-    }
-
-    blocks_size = zfile_st.st_size;
-    blocks = (char*)mmap(NULL, blocks_size,
-			 PROT_READ, MAP_PRIVATE,
-			 zfile, 0);
-    close(zfile);
-
-    if (blocks == MAP_FAILED) {
-      error (EXIT_FAILURE, errno, "%s: mmap failed", zfile_path);
-    }
-  }
+  blocks = ioutil_mmap_r(zfile_path, &blocks_size);
 
   // Load log entries
   nftw(directory_opt, peek_dir, 10, 0);
