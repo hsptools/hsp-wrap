@@ -229,7 +229,7 @@ main (int argc, char **argv)
 
     int option_index = 0;
 
-    c = getopt_long(argc, argv, "ad:fpP:s",
+    c = getopt_long(argc, argv, "anfd:p:s",
 	long_options, &option_index);
 
     // Detect the end of the options.
@@ -239,14 +239,6 @@ main (int argc, char **argv)
 
     switch (c) {
       case 0:
-	// If this option set a flag, do nothing else now.
-	if (long_options[option_index].flag != 0) {
-	  break;
-	}
-	printf("option %s", long_options[option_index].name);
-	if (optarg)
-	  printf(" with arg %s", optarg);
-	printf("\n");
 	break;
 
       case 'a':
@@ -284,7 +276,6 @@ main (int argc, char **argv)
 	break;
 
       case_GETOPT_VERSION;
-
       default:
 	abort();
     }
