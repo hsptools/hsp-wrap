@@ -707,9 +707,9 @@ static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *
       Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
       if( WIFSIGNALED(status) ) {
 	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
-	fprintf(SlaveInfo.log, "E(SIGNAL,%d)\t%d\t%s\n", status, bid, log_id);
+	fprintf(SlaveInfo.log, "E(SIGNAL,%d)\t%d\t%s\n", WTERMSIG(status), bid, log_id);
       } else {
-	fprintf(SlaveInfo.log, "E(STATUS,%d)\t%d\t%s\n", status, bid, log_id);
+	fprintf(SlaveInfo.log, "E(STATUS,%d)\t%d\t%s\n", WEXITSTATUS(status), bid, log_id);
       }
     } 
   }
@@ -912,6 +912,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, int bid, int qndx, in
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
       perror(MCW_BIN);
       fprintf(SlaveInfo.log, "E(EXEC,%d)\t%d\n", errno, bid);
+      // FIXME: is this the child process? We should kill(getppid(),...)
       sigusr_forkunlock(0);
     }
     // FIXME: Is this code unreachable?
@@ -923,7 +924,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, int bid, int qndx, in
     Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
     perror(MCW_BIN);
     fprintf(SlaveInfo.log, "E(FORK,%d)\t%d\n", errno, bid);
-    //log_error();
     sigusr_forkunlock(0);
   }
 
