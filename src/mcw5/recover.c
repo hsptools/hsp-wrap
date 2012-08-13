@@ -33,6 +33,7 @@ static int   stat_flag;
 static int   append_flag;
 // Flag set by '--force', overwrite output files, if exist
 static int   force_flag;
+static int   success_flag;
 // Directory containing log files
 static char *directory_opt;
 // Prefix for output files
@@ -293,9 +294,11 @@ main (int argc, char **argv)
 
     snprintf(fn_buf, fn_buf_size, "%s-failed", prefix_opt);
     failed_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
-
-    snprintf(fn_buf, fn_buf_size, "%s-success", prefix_opt);
-    successful_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
+    // Success file is sort of worthless except for error checking
+    if (success_flag) {
+      snprintf(fn_buf, fn_buf_size, "%s-success", prefix_opt);
+      successful_fd = ioutil_open_w(fn_buf, force_flag, append_flag);
+    }
 
     free(fn_buf);
   }
@@ -335,7 +338,9 @@ main (int argc, char **argv)
       // Write block to appropriate file
       switch (status) {
 	case 'S':
-	  if (!dry_run_flag) write(successful_fd, i, block_size);
+	  if (!dry_run_flag && success_flag) {
+	    write(successful_fd, i, block_size);
+	  }
 	  ++nsuccessful;
 	  break;
 	case 'E':
@@ -361,7 +366,9 @@ main (int argc, char **argv)
   if (!dry_run_flag) {
     close(resume_fd);
     close(failed_fd);
-    close(successful_fd);
+    if (success_flag) {
+      close(successful_fd);
+    }
   }
 
   munmap(blocks, blocks_size);
