@@ -737,17 +737,10 @@ static void Worker_FreeArgv(char **argv)
   free(argv);
 }
 
-static char **Worker_BuildArgv(int rank, int procs, int wid)
+static char **Worker_BuildArgv(int rank, int wid)
 {
-  char **argv,*m,*w,buf[1024],*saveptr=NULL;
-  int    na,node,nodes,loadstride;
-
-
-  // These will be needed later
-  node       = rank;
-  nodes      = procs;
-  loadstride = nodes/args.ndbs;
-
+  char **argv,*m,*w,*saveptr=NULL;
+  int    na;
 
   // Put program name at the start of argv list
   if( !(argv=malloc(sizeof(char*))) ) {
@@ -757,33 +750,21 @@ static char **Worker_BuildArgv(int rank, int procs, int wid)
   argv[0] = strdup(args.exe_base);
   na = 1;
 
-
   // Now add the args from the env var mode / line
   m = strdup(args.mode);
-  w = strtok_r(m, " ", &saveptr);
+  w = strtok_r(m, " \t\n", &saveptr);
   while( w ) {
     // Make room in array for another arg
     if( !(argv=realloc(argv,(na+1)*sizeof(char*))) ) {
       Vprint(SEV_ERROR, "Slave %d Worker %d Failed to grow child's argv list.\n",rank,wid);
       Abort(1);
     }
-    // Put arg in list
-    if( !strcmp(w,":DB:") ) {
-      // DB macro
-      sprintf(buf,"%s/%s%d/%s",
-              args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
-      argv[na] = strdup(buf);
-      na++;
-    } else { 
-      // Just a regular word
-      argv[na] = strdup(w);
-      na++;
-    }
-    // Advance to next arg in list
-    w = strtok_r(NULL, " ", &saveptr);
-  }
-  free(m);
+    argv[na] = w;
+    na++;
 
+    // Advance to next arg in list
+    w = strtok_r(NULL, " \t\n", &saveptr);
+  }
 
   // Add a null pointer to the end
   if( !(argv=realloc(argv,(na+1)*sizeof(char*))) ) {
@@ -791,21 +772,6 @@ static char **Worker_BuildArgv(int rank, int procs, int wid)
     Abort(1);
   }
   argv[na] = NULL;
-
-  // Debug print the command line
-  /*
-  {
-    char **p;
-    
-    buf[0] = '\0';
-    for(p=argv; *p; p++) {
-      strcat(buf,*p);
-      strcat(buf," ");
-    }
-    Vprint(SEV_DEBUG, "Slave %d Worker %d Built argv for child: \"%s\".\n",
-	   rank,wid,buf);
-  }
-  */
 
   // Return the created args list
   return argv;
@@ -848,16 +814,11 @@ static void Worker_Child_MapFDs(int rank, int wid)
 }
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, int bid, int qndx, int *rndxs)
+static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int qndx, int *rndxs)
 {
-  char **argv;
   char  name[256],exe_name[256];
   int   pid,node,nodes,loadstride;
   float io_time=0.0f;
-
-  char s_argbuf[4096];
-  char *s_argv[32];
-
 
   // These will be needed later
   node       = rank;
@@ -866,25 +827,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, int bid, int qndx, in
 
   // Lock until child process signals us with SIGUSR1
   pthread_mutex_lock(&(SlaveInfo.fork_lock));
-
-  // Parse the line to build argv[][] for child
-  // PG: We use the stack so we avoid touching pages shared with MPI between
-  //     fork and exec below. TODO: Could rework BuildArgv function
-  argv = Worker_BuildArgv(rank,procs,wid);
-/*
-  char *argi = s_argbuf;
-  int i;
-  for (i=0; argv[i] && i<32; ++i) {
-    char* arg = argv[i];
-    int   len = strlen(arg);
-    strcpy(argi, arg);
-    s_argv[i] = argi;
-    argi += len + 1;
-  }
-  s_argv[i] = NULL;
-  // Free the now unneeded argv array
-  Worker_FreeArgv(argv);
-*/
 
   // Setup the environment for the child process
   sprintf(name,"%d",file_sizes_fd);
@@ -1042,6 +984,7 @@ static void* Worker(void *arg)
   int             f,i,q,r[SlaveInfo.nout_files],done=0;
   long            ib,idb;
   char            name[256];
+  char          **argv;
 
   // Find the in/out SHMs for this worker
   // Input
@@ -1072,6 +1015,9 @@ static void* Worker(void *arg)
       Abort(1);
     }
   }
+
+  // Arguments for execv
+  argv = Worker_BuildArgv(si->rank,wid);
 
   // Done with init, start processing loop
   while( !done ) {
@@ -1143,7 +1089,7 @@ static void* Worker(void *arg)
       for( f=0; f<SlaveInfo.nout_files; ++f ) {
 	file_sizes->fs[r[f]].size = 0;
       }
-      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, workunit->blk_id, q, r);
+      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, argv, workunit->blk_id, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
