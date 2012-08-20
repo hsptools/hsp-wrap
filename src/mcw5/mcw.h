@@ -1,6 +1,7 @@
 #ifndef MCW_H
 #define MCW_H
 
+#include <stdint.h>
 #include "hsp-config.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -11,8 +12,10 @@
 // Size of the I/O buffers
 #define QUERYBUFF_SIZE      (2L<<20)                            // 2   MiB
 #define RESULTBUFF_SIZE     (1L<<27)                            // 128 MiB
-#define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*MCW_NCORES)
-#define RESULTBUFF_SHM_SIZE (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
+#define RESULTBUFF_GBL_SIZE  (RESULTBUFF_SIZE*MCW_NCORES)
+#define RESULTBUFF_GBL_COUNT (MCW_NCORES * 128)
+// TODO: Unused. remove?
+//#define RESULTBUFF_SHM_SIZE  (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
 
 
 // Flag to use compression (zlib) on output data
@@ -83,6 +86,8 @@ typedef struct {
 // For now, there will be one fixed master
 #define MASTER_RANK 0
 
+typedef uint32_t blockid_t;
+typedef uint16_t blockcnt_t;
 
 // Work unit sent from master to slaves
 typedef struct st_workunit {
@@ -91,7 +96,7 @@ typedef struct st_workunit {
   // Refactor the remaining fields.
   // ID is only used for WU_TYPE_SEQ
   // DATA is not even used in flight, only in slave queues
-  int    blk_id;    // Id for first block in the work-unit
+  blockid_t blk_id;    // Id for first block in the work-unit
   char  *data;      // Pointer to work unit data
 } workunit_t;
 
@@ -119,7 +124,14 @@ typedef struct {
 
 // Struct represents the SHM-based result buffer in memory.
 typedef struct st_resultbuff {
-  volatile long  count;
+  // Size of buffer contents in bytes
+  volatile uint32_t size;
+  // Number of "blocks" of data (program iterations)
+  volatile blockcnt_t count;
+  // Block IDs
+  volatile blockid_t bids[RESULTBUFF_GBL_COUNT];
+  volatile uint32_t bsizes[RESULTBUFF_GBL_COUNT];
+  // Buffer data
   volatile char  buff[RESULTBUFF_GBL_SIZE];
 } resultbuff_t;
 
