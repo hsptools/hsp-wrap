@@ -66,8 +66,9 @@ float init_time;
 
 
 // !!av: Gating hack
-char **Cbuff;
-int   *Nc, *Fd;
+char  **Cbuff;
+uint32_t *Nc;
+int    *Fd;
 int    ConcurrentWriters = 512;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -903,7 +904,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     strm.avail_in = 0;
     ret = inflateInit(&strm);
     if( ret != Z_OK ) {
-			fprintf(stderr, "inflate: Could not initialize!\n");
+      fprintf(stderr, "inflate: Could not initialize!\n");
       return ret;
     }
     
@@ -912,7 +913,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     do {
       if( !(strm.avail_in=((bsz>=CHUNK)?(CHUNK):(bsz))) ) {
         safe_inflateEnd(&strm);
-				fprintf(stderr, "inflate: Could not read data chunk\n");
+	fprintf(stderr, "inflate: Could not read data chunk\n");
         return Z_DATA_ERROR;
       }
       memcpy(in, &(cb->data)+cb->len-bsz, strm.avail_in);
@@ -928,10 +929,10 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
         case Z_NEED_DICT:
         case Z_DATA_ERROR:
         case Z_MEM_ERROR:
-					fprintf(stderr, "inflate: Error!\n");
+	  fprintf(stderr, "inflate: Error!\n");
           safe_inflateEnd(&strm);
         case Z_STREAM_ERROR:
-					fprintf(stderr, "inflate: Stream Error!\n");
+	  fprintf(stderr, "inflate: Stream Error!\n");
           return ret;
         }
         have = CHUNK - strm.avail_out;
@@ -947,7 +948,7 @@ int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dc
     // If the stream ended before using all the data
     // in the block, return error.
     if( bsz ) {
-			fprintf(stderr, "inflate: Data Error!\n");
+      fprintf(stderr, "inflate: Data Error!\n");
       return Z_DATA_ERROR;
     }
   }
@@ -1396,7 +1397,7 @@ static size_t Write(int fd, void *buf, size_t count)
 }
 
 
-static size_t
+static uint32_t
 CompressToBuffer(char *cbuff, resultbuff_t *ucbuff)
 {
   // Prefix with:
@@ -1437,6 +1438,7 @@ CompressToBuffer(char *cbuff, resultbuff_t *ucbuff)
   d += ucbuff->count * sizeof(uint32_t);
 
   ucbuff->size = ucbuff->count = 0;
+
   return block_size;
 }
 
@@ -1447,7 +1449,7 @@ void* ResultWriter(void *arg)
   struct timeval st,et;
   resultbuff_t  *ucbuff;
   char          *cbuff[SlaveInfo.nout_files];
-  char           nc[SlaveInfo.nout_files];
+  uint32_t       nc[SlaveInfo.nout_files];
 
   long           bw, bc;
   float          writet,compt=0.0f;
@@ -1486,7 +1488,7 @@ void* ResultWriter(void *arg)
   // !!av: Gating hack
   Cbuff  = malloc(SlaveInfo.nout_files*sizeof(char*));
   Fd     = malloc(SlaveInfo.nout_files*sizeof(int));
-  Nc     = malloc(SlaveInfo.nout_files*sizeof(int));
+  Nc     = malloc(SlaveInfo.nout_files*sizeof(uint32_t));
   if( !(Cbuff && Fd && Nc) ) {
     Vprint(SEV_ERROR,"Slave %d's Writer failed to allocate gating-hack storage.  Terminating.\n",
 	   SlaveInfo.rank);
