@@ -210,7 +210,6 @@ typedef struct st_slaveinfo {
   unsigned long    b_o;             // Output (compressed) byte size
   unsigned long    b_id;            // Input (decompressed) byte size
   unsigned long    b_od;            // Output (uncompressed) byte size
-  FILE            *log;             // Log file descriptor
 } slaveinfo_t;
 
 

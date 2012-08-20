@@ -676,22 +676,6 @@ static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *
   struct timeval  st,et;
   int             status,w,i;
   float           io_time=0.0f;
-  char            log_max, log_id[33];
-  filesize_t     *fs;
-
-  // Form an "ID" for logging this sequence.
-  // TODO: Util function shared with recovery scripts
-  fs      = &(file_sizes->fs[qndx]);
-  log_max = (fs->size > 32) ? 32 : fs->size;
-  for( i=0; i<log_max; ++i) {
-    if( fs->shm[i] == '\n' || fs->shm[i] == '\r' ) {
-      log_id[i] = ' ';
-    }
-    else {
-      log_id[i] = fs->shm[i];
-    }
-  }
-  log_id[i] = 0;
 
   // Wait for the child to finish
   if( (w=waitpid(pid,&status,0)) < 0 ) {
@@ -706,16 +690,11 @@ static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *
       // The slave's child seemes to have finished correctly
       Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
 	     rank,wid);		
-      // Log success
-      fprintf(SlaveInfo.log, "S\t%d\t%s\n", bid, log_id);
     } else {
       // There was an error with the child DB process
       Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
       if( WIFSIGNALED(status) ) {
 	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
-	fprintf(SlaveInfo.log, "E(SIGNAL,%d)\t%d\t%s\n", WTERMSIG(status), bid, log_id);
-      } else {
-	fprintf(SlaveInfo.log, "E(STATUS,%d)\t%d\t%s\n", WEXITSTATUS(status), bid, log_id);
       }
     } 
   }
@@ -859,7 +838,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     if( execv(exe_name,argv) < 0 ) {
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
       perror(MCW_BIN);
-      fprintf(SlaveInfo.log, "E(EXEC,%d)\t%d\n", errno, bid);
       // FIXME: is this the child process? We should kill(getppid(),...)
       sigusr_forkunlock(0);
     }
@@ -871,12 +849,8 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     // fork() returned an error code
     Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
     perror(MCW_BIN);
-    fprintf(SlaveInfo.log, "E(FORK,%d)\t%d\n", errno, bid);
     sigusr_forkunlock(0);
   }
-
-  // FIXME: This is overly aggressive
-  fflush(SlaveInfo.log);
 
   // Return the time it took to do IO.
   return io_time;
@@ -1666,27 +1640,9 @@ static void CreateResultBuffers()
 
 static void Init_Slave()
 {
-  char fn[1024], *jn, *files, *s, *saveptr;
+  char fn[1024], *files, *s, *saveptr;
   long wr;
   int  rv, fd, i;
-  
-  // Open the log file
-  if( (fd=open("log", O_WRONLY|O_CREAT|O_TRUNC/*|O_NOATIME*/,
-	  S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) < 0 ) {
-    Vprint(SEV_ERROR,"Failed to open log for writing. Terminating.\n");
-    Abort(1);
-  }
-  SlaveInfo.log = fdopen(fd, "w");
-
-  // Log header
-  fprintf(SlaveInfo.log, "#MCW Log File\n");
-  jn = getenv("MCW_JOB_NAME");
-  if( jn ) {
-    fprintf(SlaveInfo.log, "#mcw.job=%s\n", jn);
-  }
-  fprintf(SlaveInfo.log, "#mcw.rank=%d\n", SlaveInfo.rank);
-  fprintf(SlaveInfo.log, "#mcw.version=0.1.0\n");
-  fflush(SlaveInfo.log);
 
   // Cache information about output filenames (perhaps move to args_t)
   files = strdup(args.out_files);
@@ -1759,11 +1715,6 @@ static void Slave_Exit()
   gettimeofday(&et, NULL);
   SlaveInfo.t_o  = ((et.tv_sec*1000000+et.tv_usec) -
                    (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-
-  // Finalize log
-  fprintf(SlaveInfo.log, "#END");
-  fflush(SlaveInfo.log);
-  fclose(SlaveInfo.log);
 }
 
 
