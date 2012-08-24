@@ -10,7 +10,7 @@
 
 // Size of the I/O buffers
 #define QUERYBUFF_SIZE      (2L<<20)                            // 2   MiB
-#define RESULTBUFF_SIZE     (1L<<27)                            // 128 MiB
+#define RESULTBUFF_SIZE      (MCW_RESULTBUFF_SIZE)             // 128 MiB
 #define RESULTBUFF_GBL_SIZE (RESULTBUFF_SIZE*MCW_NCORES)
 #define RESULTBUFF_SHM_SIZE (RESULTBUFF_GBL_SIZE+sizeof(int))  // + header
 

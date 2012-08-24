@@ -20,6 +20,7 @@ def options(opt):
 
     opt.add_option('--debug', action='store_true', help='Build programs with debug flags enabled')
     opt.add_option('--num-cores', action='store', type='int', default=12, help='Number of cores to utilize in wrapper')
+    opt.add_option('--result-buffer-size', action='store', type='int', default=(1<<27), help='Size of wrapper output buffer')
 
 def configure(conf):
     conf.load('compiler_c compiler_cxx')
@@ -70,8 +71,9 @@ def configure(conf):
         conf.env.revert()
 
     # Defines
-    conf.define('MCW_NCORES', conf.options.num_cores)
-    conf.define('HSP_VERSION', VERSION)
+    conf.define('MCW_NCORES',          conf.options.num_cores)
+    conf.define('MCW_RESULTBUFF_SIZE', conf.options.result_buffer_size)
+    conf.define('HSP_VERSION',         VERSION)
     conf.write_config_header('hsp-config.h')
 
 def build(bld):
