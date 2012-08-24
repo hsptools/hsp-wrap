@@ -20,7 +20,7 @@
 */
 
 #include <stdio.h>
-#include "zutils.h"
+#include "zutils/zutils.h"
 
 
 int

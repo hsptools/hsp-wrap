@@ -6,9 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "strutils.h"
-#include "version.h"
-#include "zutils.h"
+#include "cliutils/version.h"
+#include "strutils/strutils.h"
+#include "zutils/zutils.h"
 
 #define PACKAGE_NAME "HSP Gather"
 #define AUTHORS "Paul Giblock"

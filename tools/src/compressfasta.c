@@ -1,17 +1,17 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdint.h>
 
-#include "zutils.h"
+#include "zutils/zutils.h"
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //                              Types and Defines                             //
@@ -29,7 +29,7 @@ typedef struct st_info {
 } info_t;
 
 
-// This is a small until; I'll just make this a global
+// This is a small util; I'll just make this a global
 info_t nfo;
 
 
@@ -46,12 +46,12 @@ static int seqcmp(char *s, char *m)
       return 0;
     } else {
       if( (*s) < (*m) ) {
-	return -1;
+        return -1;
       } else if( (*s) > (*m) ) {
-	return 1;
+        return 1;
       } else {
-	s++;
-	m++;
+        s++;
+        m++;
       }
     }
   }
@@ -63,6 +63,32 @@ static int seqcmp(char *s, char *m)
 }
 
 
+// Paul version
+// Finds the length of the query sequence seq
+/*
+static int Sequence_Length(char *seq)
+{
+  char *p, *lp;
+
+  // Verify input
+  if (seq >= nfo.equery) {
+    return 0;
+  }
+
+  // Look forward until end of sequences are found or
+  // new sequence start '>' is found.
+  for (p=seq+1, lp=seq; p<nfo.equery; lp = p++) {
+    if (*p == '>' && (*lp == '\n' || *lp == '\r'))
+      break;
+  }
+
+  // Return the diff of start and end
+  return ((int)(p-seq));
+}
+*/
+
+
+// Aaron version
 static int Sequence_Length(char *seq)
 {
   char *p = seq;
@@ -74,17 +100,17 @@ static int Sequence_Length(char *seq)
   // Look forward until end of sequences are found or
   // new sequence start sequence is found.
   do {
-    for(p++; (p < nfo.equery) && (*p != '@'); p++);
+    for(p++; (p < nfo.equery) && (*p != '>'); p++);
     if( p >= nfo.equery ) {
       // End of all sequences found
       if( p > seq+1 ) {
-	// Some bytes were found before end..
-	return nfo.equery-seq;
+      // Some bytes were found before end..
+        return nfo.equery-seq;
       } else {
-	return 0;
+        return 0;
       }
     }
-  } while( seqcmp(p,"@<TRIPOS>MOLECULE") );
+  } while( seqcmp(p,">") );
 
   // Found a match at p
   return p-seq;
@@ -131,7 +157,7 @@ static void Init_Sequences(char *fn)
   if( nfo.queries == MAP_FAILED ) {
     f = errno;
     fprintf(stderr,"Could not mmap() opened query file.  Terminating. (errno:%d -> %s)\n",
-	    f,strerror(f));
+            f,strerror(f));
     exit(1);
   }
 
@@ -146,29 +172,45 @@ static void Init_Sequences(char *fn)
 ////////////////////////////////////////////////////////////////////////////////
 
 
+void print_usage(FILE *f)
+{
+  fprintf(f, "usage: compressfasta [-v] <fasta_file> <block_size> <output_file>\n");
+}
+
+
+void print_help()
+{
+  print_usage(stdout);
+  printf("LALALA\n");
+}
+
+
 int main(int argc, char **argv)
 {
   char   *seq;
-  int     i, bsz;
+  int     i, bsz, block_num;
   size_t  sz;
   FILE   *f;
 
-  
   // Clear the info struct
   memset(&nfo,0,sizeof(info_t));
-  
+
   // Check command line args
+  if( argc == 2 && strcmp(argv[1], "--help") == 0) {
+    print_help();
+    exit(0);
+  }
   if( argc != 4 ) {
-    fprintf(stderr,"usage:\n\tcompressmol2 <mol2_file> <block_size> <output_file>\n");
+    print_usage(stderr);
     exit(1);
   }
 
   // Get split count
   if( sscanf(argv[2],"%d",&bsz) != 1 ) {
-    fprintf(stderr,"usage:\n\tcompressmol2 <mol2_file> <block_size> <output_file>\n");
+    fprintf(stderr,"compressfasta: %s: invalid block size parameter\n",argv[2]);
     exit(1);
   }
-  
+
   // Get access to the query sequence file so that we can
   // iterate through the list
   Init_Sequences(argv[1]);
@@ -180,28 +222,30 @@ int main(int argc, char **argv)
   }
 
   // Get a block of sequences to put in output file
+  block_num = 0;
   for(i=0,seq=NULL; !i || seq; i++) {
     // Get a block
     for(sz=0; (sz < bsz) && (seq=Get_Sequence()); sz+=nfo.sequencels[nfo.nsequences-1]) {
       nfo.nsequences++;
       if( !(nfo.sequences = realloc(nfo.sequences,nfo.nsequences*sizeof(char*))) ) {
-	fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
-	exit(1);
+        fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
+        exit(1);
       }
       if( !(nfo.sequencels = realloc(nfo.sequencels,nfo.nsequences*sizeof(size_t))) ) {
-	fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
-	exit(1);
+        fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
+        exit(1);
       }
       nfo.sequences[nfo.nsequences-1]  = seq;
       nfo.sequencels[nfo.nsequences-1] = Sequence_Length(seq);
     }
-    
+
     // Write the block to the file:
     //
     // I happen to know that "seq=Get_Sequence()" will always be contiguous
     // non-terminated sequences when called in succsession like above.
     if( sz ) {
-      zutil_compress_write(f, nfo.sequences[0], sz, Z_DEFAULT_COMPRESSION);
+      printf("Block %d, %d sequences.\n", block_num++, nfo.nsequences);
+      zutil_compress_write(f, nfo.sequences[0], sz, CF_COMPRESSION_LEVEL);
     }
 
     // Get ready for the next block

@@ -13,8 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "ioutils.h"
-#include "version.h"
+#include "cliutils/version.h"
+#include "ioutils/ioutils.h"
 
 #define PACKAGE_NAME "HSP Recover"
 #define AUTHORS "Paul Giblock"

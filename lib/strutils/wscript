@@ -10,4 +10,5 @@ def build(bld):
     '''
 
     ## user library
-    bld.stlib(target='strutils', source=src, includes='.')
+    bld.stlib(target='strutils', source=src, includes='.',
+              export_includes='.')

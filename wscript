@@ -77,5 +77,5 @@ def configure(conf):
     conf.write_config_header('hsp-config.h')
 
 def build(bld):
-    bld.recurse('lib mcw')
+    bld.recurse('lib mcw tools')
 
