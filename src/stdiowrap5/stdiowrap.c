@@ -182,12 +182,12 @@ static WFILE* new_WFILE(const char *fn)
 {
   WFILE *wf;
   char  *saveptr, *files, *n, *name=NULL;
-  char   buf[32];
+  char   buf[512];
   int    rv, i;
 
   // Map filename to proper SHM name
   if( !strncmp(fn,":DB:", 4) ) {
-    name = getenv("MCW_DB_FULL_PATH");
+    sprintf(buf, "%s/%s", getenv("MCW_DB_FULL_PATH"), getenv("MCW_DB_PREFIX"));
   } else if( !strncmp(fn, ":IN:", 4) ) {
     sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
     name = buf;
