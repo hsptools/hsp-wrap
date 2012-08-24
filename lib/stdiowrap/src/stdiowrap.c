@@ -17,26 +17,26 @@
 
 // Set default backend
 #ifndef BACKEND_MMAP
-#ifndef BACKEND_SHM
-#warn "A backend has not been set; using default: BACKEND_MMAP."
-#define BACKEND_MMAP
-#endif
+#  ifndef BACKEND_SHM
+#    warn "A backend has not been set; using default: BACKEND_MMAP."
+#    define BACKEND_MMAP
+#  endif
 #endif
 
 
 // Defines and includes needed for the SHMs
 #ifdef BACKEND_SHM
-#include <sys/ipc.h>
-#include <sys/shm.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#define MAX_DB_FILES   (256)
+#  include <sys/ipc.h>
+#  include <sys/shm.h>
+#  include <sys/types.h>
+#  include <sys/time.h>
+#  define MAX_DB_FILES   (256)
 #endif
 
 
 // Include local header
 #define STDIOWRAP_C
-#include "stdiowrap.h"
+#include "stdiowrap/stdiowrap.h"
 
 
 // SHM list SHM

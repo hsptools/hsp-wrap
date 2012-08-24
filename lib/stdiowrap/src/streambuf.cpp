@@ -1,21 +1,23 @@
 #include <fstream>
 #include <iostream>
 #include <streambuf>
-#include "streambufwrap.h"
 
-#include "stdiowrap.h"
+#include "stdiowrap/streambuf.h"
+#include "stdiowrap/stdiowrap.h"
 
+#define BAD_HANDLE ((FILE*)-1)
 
 //
 // Interface
 //
 
 
-int stdiowrap::streambuf::open(char *fn, char *mode)
+int
+stdiowrap::streambuf::open (char *fn, char *mode)
 {
   FILE *in_handle;
 
-  if( !(in_handle=stdiowrap_fopen(fn, mode)) ) {
+  if (!(in_handle=stdiowrap_fopen(fn, mode))) {
     return 0;
   }
 
@@ -24,12 +26,13 @@ int stdiowrap::streambuf::open(char *fn, char *mode)
 }
 
 
-void stdiowrap::streambuf::close()
+void
+stdiowrap::streambuf::close ()
 {
-  if( m_handle > 0 ){
+  if (m_handle > 0) {
     stdiowrap_fclose(m_handle);
   }
-  m_handle = ((FILE*)-1);
+  m_handle = BAD_HANDLE;
 }
 
 
@@ -37,17 +40,18 @@ void stdiowrap::streambuf::close()
 // Implementation of Virtual Interface
 //
 
-stdiowrap::streambuf::int_type stdiowrap::streambuf::overflow(stdiowrap::streambuf::int_type c)
+stdiowrap::streambuf::int_type
+stdiowrap::streambuf::overflow (stdiowrap::streambuf::int_type c)
 {
-  char*     begin = pbase();
-  char*     end   = pptr();
+  char *begin = pbase();
+  char *end   = pptr();
   
   // Note, this function may need a lock around it, if you plan on it being
   // called from multiple threads.
 
   // We save one extra byte at the end of our buffer for storing the "xtra byte".
   // if it is EOF, you may want to do soemthing different with it
-  if( traits_type::not_eof(c) ) {
+  if (traits_type::not_eof(c)) {
     *(end++) = c;
   } else {
     // EOF, you decide what to do. I'm ignoring it
@@ -65,7 +69,8 @@ stdiowrap::streambuf::int_type stdiowrap::streambuf::overflow(stdiowrap::streamb
 }
 
 
-stdiowrap::streambuf::int_type stdiowrap::streambuf::sync()
+stdiowrap::streambuf::int_type
+stdiowrap::streambuf::sync ()
 {
   // Flush out our buffer
   int_type ret = overflow(traits_type::eof());
@@ -79,7 +84,8 @@ stdiowrap::streambuf::int_type stdiowrap::streambuf::sync()
 }
 
 
-stdiowrap::streambuf::int_type stdiowrap::streambuf::underflow()
+stdiowrap::streambuf::int_type
+stdiowrap::streambuf::underflow ()
 {
   // Get as much as possible
   size_t len = stdiowrap_fread(m_inBuff, 1, BUFF_SIZE, m_handle);
@@ -90,10 +96,9 @@ stdiowrap::streambuf::int_type stdiowrap::streambuf::underflow()
   
   // Assume nothing means end-of-file, you may want to actually check
   // the last byte, look at feof(), etc...
-  if(len == 0) {
+  if (len == 0) {
     return traits_type::eof();
-  }
-  else {
+  } else {
     return traits_type::not_eof(m_inBuff[0]);
   }
 }
