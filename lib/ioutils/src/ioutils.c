@@ -12,11 +12,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "version.h"
+#include "ioutils/ioutils.h"
 
-#define PACKAGE_NAME "HSP ZSplit"
-#define AUTHORS "Paul Giblock"
-#define VERSION "0.1.0"
 
 int
 ioutil_open_w (const char *fpath, int force, int append)

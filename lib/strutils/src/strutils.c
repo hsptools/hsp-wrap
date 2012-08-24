@@ -1,10 +1,10 @@
-#ifndef HSP_STRUTILS_H__
-#define HSP_STRUTILS_H__
-
 #include <string.h>
 
+#include "strutils/strutils.h"
+
 int
-str_ends_with(const char *str, const char *suffix) {
+str_ends_with (const char *str, const char *suffix)
+{
   size_t lstr, lsuffix;
 
   if (!str || !suffix) {
@@ -23,7 +23,8 @@ str_ends_with(const char *str, const char *suffix) {
 }
 
 int
-str_cnt_chr(const char *str, char chr) {
+str_cnt_chr (const char *str, char chr)
+{
   int i = 0;
   while( str[i] ) {
     if( str[i] == chr ) {
@@ -34,5 +35,3 @@ str_cnt_chr(const char *str, char chr) {
   }
   return i;
 }
-
-#endif

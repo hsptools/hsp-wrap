@@ -1,0 +1,13 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+from waflib import Logs
+
+def build(bld):
+    src = '''
+       src/zutils.c
+    '''
+
+    ## user library
+    bld.stlib(target='zutils', source=src, includes='.', use='ZLIB')

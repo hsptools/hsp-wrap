@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdarg.h>
-#include "version.h"
+#include "cliutils/version.h"
 
 void
 print_version (FILE *f,
