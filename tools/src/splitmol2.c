@@ -152,7 +152,7 @@ static void Init_Sequences(char *fn)
 
 int main(int argc, char **argv)
 {
-  char   *seq, *p, fn[256];
+  char   *seq, fn[256];
   int     i, j, k, splits;
   size_t  sz, fs;	//fs: file size
   FILE   *f;

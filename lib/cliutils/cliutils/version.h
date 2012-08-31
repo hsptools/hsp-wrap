@@ -10,20 +10,19 @@ void print_version (FILE *f, const char *command_name,
 
 // Standard case for getopt - modeled after GNU coreutils
 #ifdef COMMAND_NAME
-#define case_GETOPT_VERSION \
-  case '^': \
+# define PRINT_VERSION() \
     print_version(stdout, COMMAND_NAME, PACKAGE_NAME, \
-		  VERSION, AUTHORS, (char*)NULL); \
-    exit(EXIT_SUCCESS); \
-    break;
+                  VERSION, AUTHORS, (char*)NULL)
 #else // !COMMAND_NAME
-#define case_GETOPT_VERSION \
-  case '^': \
+# define PRINT_VERSION() \
     print_version(stdout, NULL, PACKAGE_NAME, \
-		  VERSION, AUTHORS, (char*)NULL); \
-    exit(EXIT_SUCCESS); \
-    break;
+		  VERSION, AUTHORS, (char*)NULL)
 #endif // COMMAND_NAME
 
+#define case_GETOPT_VERSION \
+  case '^': \
+    PRINT_VERSION(); \
+    exit(EXIT_SUCCESS); \
+    break;
 
 #endif // HSP_VERSION_H__

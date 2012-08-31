@@ -674,7 +674,7 @@ static void Worker_WriteResults(int *rndxs, int wid, int bid)
 static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *rndxs)
 {
   struct timeval  st,et;
-  int             status,w,i;
+  int             status,w;
   float           io_time=0.0f;
 
   // Wait for the child to finish
@@ -763,6 +763,7 @@ static char **Worker_BuildArgv(int rank, int wid)
 }
 
 
+#if 0
 static void Worker_Child_MapFDs(int rank, int wid)
 {
   static int  devnull=-1;
@@ -797,6 +798,7 @@ static void Worker_Child_MapFDs(int rank, int wid)
   }
   safe_free(m);
 }
+#endif
 
 
 static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int qndx, int *rndxs)
@@ -1098,6 +1100,7 @@ static void* Worker(void *arg)
   }
 
   Vprint(SEV_DEBUG,"Slave %d Worker %d done; exiting.\n",SlaveInfo.rank,wid);
+  Worker_FreeArgv(argv);
   return NULL;
 }
 
@@ -1133,144 +1136,6 @@ void Start_Workers()
 
 
 #define ZCHUNK 16384
-
-// Writes "sz" bytes from "source" to the stream "dest", compressing
-// the data first with zlib compression strength "level".
-//
-// Special thanks to Mark Adler for providing the non-copyrighted
-// public domain example program "zpipe.c", from which this function
-// is based (Version 1.4  December 11th, 2005).
-// TODO: Use zutils
-static float ZCompressWrite(void *source, int sz, FILE *dest, int level, long *bw)
-{
-  struct timeval  st,et;
-  z_stream        strm;
-  unsigned char   in[ZCHUNK],out[ZCHUNK];
-  int             blk,tw=sz;
-  int             rv,flush;
-  unsigned        ndata;
-  long            lenpos,len;
-  float           ct=0.0;
-  
-  // Init zlib state
-  gettimeofday(&st, NULL);
-  strm.zalloc = Z_NULL;
-  strm.zfree  = Z_NULL;
-  strm.opaque = Z_NULL;
-  rv = deflateInit(&strm, level);
-  if( rv != Z_OK ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to init zlib.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-  gettimeofday(&et, NULL);
-  ct += ((et.tv_sec*1000000+et.tv_usec) -
-        (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-  (*bw) = 0;
-  
-
-  // Write a placeholder long that will eventually hold the 
-  // compressed block size.
-  if( (lenpos=ftell(dest)) < 0 ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to find block size pos.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-  len = 0;
-  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to stub block size.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-
-  // Compress while there is still data to write
-  gettimeofday(&st, NULL);
-  do {
-    // Setup input
-    blk = ((tw < ZCHUNK)?(tw):(ZCHUNK));
-    memcpy(in, source+(sz-tw), blk);
-    strm.avail_in = blk;
-    strm.next_in  = in;
-    flush = ((!(tw-blk))?(Z_FINISH):(Z_NO_FLUSH));
-    do {
-      // Setup output and compress
-      strm.avail_out = ZCHUNK;
-      strm.next_out  = out;
-      rv = deflate(&strm, flush);
-      if( rv == Z_STREAM_ERROR ) {
-        Vprint(SEV_ERROR,"Slave %d's Writer failed to compress output block.  Terminating.\n",
-               SlaveInfo.rank);
-        result_thread_error = 1;
-        pthread_exit(NULL);
-      }
-      // Write compressed data to destination
-      ndata = ZCHUNK - strm.avail_out;
-      gettimeofday(&et, NULL);
-      ct += ((et.tv_sec*1000000+et.tv_usec) -
-            (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-      if( (fwrite(out, 1, ndata, dest) != ndata) || ferror(dest) ) {
-        deflateEnd(&strm);
-        Vprint(SEV_ERROR,"Slave %d's Writer failed to fwrite() compressed output block.  Terminating.\n",
-               SlaveInfo.rank);
-        result_thread_error = 1;
-        pthread_exit(NULL);
-      }
-      gettimeofday(&st, NULL);
-      len += ndata;
-    } while( strm.avail_out == 0 );
-    // Sanity check
-    if( strm.avail_in != 0 ) {
-      Vprint(SEV_ERROR,"Slave %d's Writer did not fully compress block.  Terminating.\n",
-             SlaveInfo.rank);
-      result_thread_error = 1;
-      pthread_exit(NULL);
-    }
-    // Update "to write" count
-    tw -= blk;
-  } while( flush != Z_FINISH );
-
-  // Another sanity check
-  if( rv != Z_STREAM_END ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer didn't finish compression properly.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-
-  // Cleanup
-  deflateEnd(&strm);
-  gettimeofday(&et, NULL);
-  ct += ((et.tv_sec*1000000+et.tv_usec) -
-        (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
-
-  // Now that the compressed data is written, write the
-  // size of the compressed block at the front of the block
-  if( fseek(dest,lenpos,SEEK_SET) ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer could not seek to len pos.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-  if( fwrite(&len,sizeof(len),1,dest) != 1 ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer failed to write len.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-  if( fseek(dest,0,SEEK_END) ) {
-    Vprint(SEV_ERROR,"Slave %d's Writer could not seek to end.  Terminating.\n",
-           SlaveInfo.rank);
-    result_thread_error = 1;
-    pthread_exit(NULL);
-  }
-
-  // Now return the time spent on the compression overhead (and byte counts)
-  (*bw) = len + sizeof(len);
-  return ct;
-}
 
 
 // Compresses "sz" bytes from "source" to "dest", compressing
@@ -1403,7 +1268,7 @@ CompressToBuffer(char *cbuff, resultbuff_t *ucbuff)
   memcpy(d, &block_size, sizeof(uint32_t));
   d += sizeof(uint32_t);
   // Write count
-  memcpy(d, &(ucbuff->count), sizeof(blockcnt_t));
+  memcpy(d, (const char*)(&(ucbuff->count)), sizeof(blockcnt_t));
   d += sizeof(blockcnt_t);
   // Write block information
   memcpy(d, &(ucbuff->bids), ucbuff->count * sizeof(blockid_t));
@@ -1499,9 +1364,16 @@ void* ResultWriter(void *arg)
       }
     
       // Copy the data from the global buffer to our local buffer
-      memcpy(ucbuff[i].buff+ucbuff[i].size,    (char*)resultbuff[i].buff,   resultbuff[i].size);
-      memcpy(ucbuff[i].bids+ucbuff[i].count,   (char*)resultbuff[i].bids,   resultbuff[i].count * sizeof(blockid_t));
-      memcpy(ucbuff[i].bsizes+ucbuff[i].count, (char*)resultbuff[i].bsizes, resultbuff[i].count * sizeof(uint32_t));
+      memcpy((char *)(ucbuff[i].buff + ucbuff[i].size),
+	     (const char *)resultbuff[i].buff,
+	     resultbuff[i].size);
+      memcpy((char *)(ucbuff[i].bids + ucbuff[i].count),
+	     (const char *)resultbuff[i].bids,
+	     resultbuff[i].count * sizeof(blockid_t));
+      memcpy((char *)(ucbuff[i].bsizes + ucbuff[i].count),
+	     (const char *)resultbuff[i].bsizes,
+	     resultbuff[i].count * sizeof(uint32_t));
+
       ucbuff[i].size  += resultbuff[i].size;
       ucbuff[i].count += resultbuff[i].count;
 
@@ -2230,7 +2102,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
 
 static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
 {
-  int rc, thread_support;
+  int rc;
 
   // Init MPI, get the number of MPI processes and our rank
   rc = MPI_Init(argc,argv);

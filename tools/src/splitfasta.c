@@ -95,26 +95,6 @@ static void Init_Sequences(char *fn)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-
-
-static int Compare_Sequences_Length(const void *a, const void *b)
-{
-  char *seqa = *((char**)a);
-  char *seqb = *((char**)b);
-  int   lena = Sequence_Length(seqa);
-  int   lenb = Sequence_Length(seqb);
-  
-  if( lena < lenb ) {
-    return 1;
-  } else if( lena > lenb ) {
-    return -1;
-  } else {
-    return 0;
-  }
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
 //                  Application Entry / High Level Code                       //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -122,7 +102,8 @@ static int Compare_Sequences_Length(const void *a, const void *b)
 int main(int argc, char **argv)
 {
   char   *seq,*p,fn[256];
-  size_t  i,j,sz,fs,splits;
+  int     i,j,splits;
+  size_t  sz,fs;
   FILE   *f;
 
   // Clear the info struct

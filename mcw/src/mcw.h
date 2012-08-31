@@ -211,6 +211,9 @@ typedef struct st_slaveinfo {
 } slaveinfo_t;
 
 
+void sigusr_forkunlock(int arg);
+
+
 #endif
 
 // vim: ts=8:sts=2:sw=2

@@ -10,8 +10,12 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include "cliutils/version.h"
 #include "zutils/zutils.h"
 
+#define PACKAGE_NAME "HSP Compress Fasta"
+#define AUTHORS "Paul Giblock", "Aaron Vose"
+#define VERSION "1.0.0"
 
 ////////////////////////////////////////////////////////////////////////////////
 //                              Types and Defines                             //
@@ -25,7 +29,7 @@ typedef struct st_info {
   char       *equery;       // One byte past last valid byte of query
   char      **sequences;    // Array of sorted (at some point) inputs
   size_t     *sequencels;   // Array of sorted (at some point) inputs
-  size_t      nsequences;   // Number of known sequences
+  unsigned int nsequences;  // Number of known sequences
 } info_t;
 
 
@@ -172,16 +176,21 @@ static void Init_Sequences(char *fn)
 ////////////////////////////////////////////////////////////////////////////////
 
 
-void print_usage(FILE *f)
+static void
+print_usage ()
 {
-  fprintf(f, "usage: compressfasta [-v] <fasta_file> <block_size> <output_file>\n");
-}
-
-
-void print_help()
-{
-  print_usage(stdout);
-  printf("LALALA\n");
+  printf("Usage: compressfasta [OPTION]... INPUT BLOCK_SIZE OUTPUT\n");
+  puts("\
+HSP Compress Fasta is used to prepare a file of FASTA sequences for\n\
+execution under HSP MCW.  The file INPUT is divided into blocks\n\
+approximately BLOCK_SIZE in length.  The compressed data is saved into\n\
+a new file named OUTPUT\n\n\
+Note: The options for compressfasta will change in the near future\n\n\
+Options:\n\
+      --help          display this help and exit\n\
+      --version       display version information and exit\n\n\
+Report bugs to <brekapal@utk.edu>\
+");
 }
 
 
@@ -196,12 +205,18 @@ int main(int argc, char **argv)
   memset(&nfo,0,sizeof(info_t));
 
   // Check command line args
-  if( argc == 2 && strcmp(argv[1], "--help") == 0) {
-    print_help();
-    exit(0);
+  if( argc == 2 ) {
+    if( strcmp(argv[1], "--help") == 0 ) {
+      print_usage();
+      exit(0);
+    }
+    if( strcmp(argv[1], "--version") == 0 ) {
+      PRINT_VERSION();
+      exit(0);
+    }
   }
   if( argc != 4 ) {
-    print_usage(stderr);
+    fprintf(stderr,"compressfasta: incorrect number of parameters\n");
     exit(1);
   }
 

@@ -16,7 +16,7 @@ def build(bld):
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
 
     # MOL2 tools
-    bld.program(source='src/compressmol2.c', target='compressmol2', use='zutils')
+    bld.program(source='src/compressmol2.c', target='compressmol2', use='cliutils zutils')
     bld.program(source='src/splitmol2.c', target='splitmol2')
 
     # Block-wise recovery

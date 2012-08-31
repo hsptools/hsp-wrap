@@ -181,7 +181,8 @@ static void free_WFILE_data_SHM(WFILE *wf)
 static WFILE* new_WFILE(const char *fn)
 {
   WFILE *wf;
-  char  *saveptr, *files, *n, *name=NULL;
+  char  *saveptr, *files, *n;
+  const char *name=NULL;
   char   buf[512];
   int    rv, i;
 

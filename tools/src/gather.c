@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include "cliutils/version.h"
+#include "ioutils/ioutils.h"
 #include "strutils/strutils.h"
 #include "zutils/zutils.h"
 
@@ -25,7 +26,7 @@ static int   force_flag;
 // Name of output file
 static char *output_opt;
 
-// Name of program (recover)
+// Name of program (gather)
 static char *program_name;
 
 // Output file
@@ -34,7 +35,7 @@ FILE *out;
 static void
 print_usage ()
 {
-  printf("Usage: gather %s [OPTION]... FILENAME\n", program_name);
+  printf("Usage: %s [OPTION]... FILENAME\n", program_name);
   puts("\
 HSP Gather is the standard way to coalesce the output results of a\n\
 completed HSP job.  The resulting output files with the name FILENAME are\n\
@@ -47,7 +48,7 @@ Options:\n\
   -o, --output=FILE   write to output file instead of standard output\n\
       --help          display this help and exit\n\
       --version       display version information and exit\n\n\
-Report bugs to <pgiblock@utk.edu>\
+Report bugs to <brekapal@utk.edu>\
 ");
 }
 

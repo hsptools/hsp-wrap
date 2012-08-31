@@ -11,7 +11,12 @@
 #include <errno.h>
 #include <stdint.h>
 
+#include "cliutils/version.h"
 #include "zutils/zutils.h"
+
+#define PACKAGE_NAME "HSP Compress MOL2"
+#define AUTHORS "Paul Giblock", "Aaron Vose"
+#define VERSION "1.0.0"
 
 ////////////////////////////////////////////////////////////////////////////////
 //                              Types and Defines                             //
@@ -146,6 +151,24 @@ static void Init_Sequences(char *fn)
 ////////////////////////////////////////////////////////////////////////////////
 
 
+static void
+print_usage ()
+{
+  printf("Usage: compressmol2 [OPTION]... INPUT BLOCK_SIZE OUTPUT\n");
+  puts("\
+HSP Compress Fasta is used to prepare a file of compounds in MOL2 format\n\
+for execution under HSP MCW.  The file INPUT is divided into blocks\n\
+approximately BLOCK_SIZE in length.  The compressed data is saved into\n\
+a new file named OUTPUT\n\n\
+Note: The options for compressmol2 will change in the near future\n\n\
+Options:\n\
+      --help          display this help and exit\n\
+      --version       display version information and exit\n\n\
+Report bugs to <brekapal@utk.edu>\
+");
+}
+
+
 int main(int argc, char **argv)
 {
   char   *seq;
@@ -158,14 +181,24 @@ int main(int argc, char **argv)
   memset(&nfo,0,sizeof(info_t));
   
   // Check command line args
+  if( argc == 2 ) {
+    if( strcmp(argv[1], "--help") == 0 ) {
+      print_usage();
+      exit(0);
+    }
+    if( strcmp(argv[1], "--version") == 0 ) {
+      PRINT_VERSION();
+      exit(0);
+    }
+  }
   if( argc != 4 ) {
-    fprintf(stderr,"usage:\n\tcompressmol2 <mol2_file> <block_size> <output_file>\n");
+    fprintf(stderr,"compressfasta: incorrect number of parameters\n");
     exit(1);
   }
 
   // Get split count
   if( sscanf(argv[2],"%d",&bsz) != 1 ) {
-    fprintf(stderr,"usage:\n\tcompressmol2 <mol2_file> <block_size> <output_file>\n");
+    fprintf(stderr,"compressfasta: %s: invalid block size parameter\n",argv[2]);
     exit(1);
   }
   

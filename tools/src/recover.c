@@ -68,7 +68,7 @@ Options:\n\
   -v, --verbose       verbosely list files processed\n\
       --help          display this help and exit\n\
       --version       output version information and exit\n\n\
-Report bugs to <pgiblock@utk.edu>\
+Report bugs to <brekapal@utk.edu>\
 ");
 }
 

@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <string.h>
 #include <expat.h>
 
@@ -13,8 +15,8 @@ typedef struct st_userdata {
   char *Hit_id;
   char *Hit_def;
   char *Hsp_evalue;
-  char *Hsp_query_from;                                                                                                                                                                                                                
-  char *Hsp_query_to;                                                                                                                                                                                                                  
+  char *Hsp_query_from;
+  char *Hsp_query_to;
   char *Hsp_hit_from;
   char *Hsp_hit_to;
   char *text;
@@ -396,9 +398,16 @@ int main(int argc, char **argv)
 
     // Parse the line
     if( !XML_Parse(parser, buf, len, done) ) {
-      fprintf(stderr, "%s at parser line %d\n",
-	      XML_ErrorString(XML_GetErrorCode(parser)),
-	      XML_GetCurrentLineNumber(parser));
+      XML_Size xml_line = XML_GetCurrentLineNumber(parser);
+      if( sizeof(XML_Size) == 8 ) {
+        fprintf(stderr, "%s at parser line %llu\n",
+		XML_ErrorString(XML_GetErrorCode(parser)),
+		*((long long unsigned int*)&xml_line));
+      } else {
+        fprintf(stderr, "%s at parser line %u\n",
+		XML_ErrorString(XML_GetErrorCode(parser)),
+		*((unsigned int*)&xml_line));
+      }
       fprintf(stderr,"Global line: %d\n",line);
       fprintf(stderr, "byte: %ld\ncontext: %s\n",
 	      ((long int)ftell(f)), buf);
