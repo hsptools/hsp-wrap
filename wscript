@@ -18,7 +18,7 @@ def options(opt):
     opt.load('compiler_c compiler_cxx')
     opt.load('compiler_mpi_c', tooldir=tool_dir)
 
-    opt.add_option('--debug', action='store_true', help='Build programs with debug flags enabled')
+    opt.add_option('--debug', action='store_true', help='Build programs with debugging symbols')
     opt.add_option('--num-cores', action='store', type='int', default=12, help='Number of cores to utilize in wrapper')
     opt.add_option('--result-buffer-size', action='store', type='int', default=(1<<27), help='Size of wrapper output buffer')
 
@@ -28,6 +28,9 @@ def configure(conf):
 
     # Warn about almost anything
     conf.env.append_unique('CFLAGS', ['-Wall'])
+
+    # Debug vs Release
+    conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O2'])
 
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)
@@ -71,6 +74,7 @@ def configure(conf):
         conf.env.revert()
 
     # Defines
+    conf.define_cond('DEBUG',          conf.options.debug)
     conf.define('MCW_NCORES',          conf.options.num_cores)
     conf.define('MCW_RESULTBUFF_SIZE', conf.options.result_buffer_size)
     conf.define('HSP_VERSION',         VERSION)
