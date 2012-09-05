@@ -25,17 +25,136 @@
 #include <string.h>
 #include <assert.h>
 #include <zlib.h>
+#include <stdint.h>
 
 
 #define CHUNK 16384
 
-int
-zutil_inf(FILE *dest, FILE *source, int *blks) {
+static int
+inflate_block(FILE *dest, FILE *source, long bsz) {
   int ret;
   unsigned have;
   z_stream strm;
   unsigned char in[CHUNK];
   unsigned char out[CHUNK];
+
+  // Init inflate state
+  strm.zalloc   = Z_NULL;
+  strm.zfree    = Z_NULL;
+  strm.opaque   = Z_NULL;
+  strm.avail_in = 0;
+  strm.next_in  = Z_NULL;
+  ret = inflateInit(&strm);
+  if (ret != Z_OK) {
+    return ret;
+  }
+
+  // Decompress until we have processed bsz bytes
+  do {
+    strm.avail_in = fread(in, 1, ((bsz>=CHUNK)?(CHUNK):(bsz)), source);
+    if (ferror(source)) {
+      inflateEnd(&strm);
+      return Z_ERRNO;
+    }
+    if (strm.avail_in == 0) {
+      return Z_DATA_ERROR;
+    }
+    strm.next_in = in;
+    bsz -= strm.avail_in;
+    /* run inflate() on input until output buffer not full */
+    do {
+      strm.avail_out = CHUNK;
+      strm.next_out = out;
+
+      ret = inflate(&strm, Z_NO_FLUSH);
+      switch (ret) {
+      case Z_NEED_DICT:
+	ret = Z_DATA_ERROR;
+      case Z_DATA_ERROR:
+      case Z_MEM_ERROR:
+	inflateEnd(&strm);
+	return ret;
+      case Z_STREAM_ERROR:
+	return Z_STREAM_ERROR;
+      }
+
+      have = CHUNK - strm.avail_out;
+      if (fwrite(out, 1, have, dest) != have || ferror(dest)) {
+	inflateEnd(&strm);
+	return Z_ERRNO;
+      }
+    } while (strm.avail_out == 0);
+
+    // Done when inflate() says it's done
+  } while (ret != Z_STREAM_END);
+
+  // clean up
+  inflateEnd(&strm);
+
+  // If the stream ended before using all the data
+  // in the block, return error.
+  if (bsz) {
+    return Z_DATA_ERROR;
+  }
+
+  return ret == Z_STREAM_END ? Z_OK : Z_DATA_ERROR;
+}
+
+
+int
+zutil_inf2(FILE *dest, FILE *source, int *blks) {
+  const size_t block_hdr_size = sizeof(uint32_t) + sizeof(uint32_t);
+
+  uint32_t block_size;
+  uint32_t data_size;
+  uint16_t block_cnt;
+  int      ret;
+
+  *blks = 0;
+
+  while (1) {
+    // Read block size
+    if (fread(&block_size,sizeof(block_size),1,source) != 1) {
+      if (feof(source)) {
+        // Ending at a file position reserved for a block
+        // size indicates completion.
+        return Z_OK;
+      }
+      return Z_DATA_ERROR;
+    }
+
+    // Read block count
+    if (fread(&block_cnt,sizeof(block_cnt),1,source) != 1) {
+      return Z_DATA_ERROR;
+    }
+
+    // Skip block header
+    fseek(source, block_hdr_size * block_cnt, SEEK_CUR);
+    if (feof(source)) {
+      return Z_DATA_ERROR;
+    }
+
+    // Read data size
+    if (fread(&data_size,sizeof(data_size),1,source) != 1) {
+      return Z_DATA_ERROR;
+    }
+
+    ret = inflate_block(dest, source, data_size);
+    if (ret != Z_OK) {
+      return ret;
+    }
+
+    // Increment number of blocks count
+    (*blks)++;
+  }
+
+  return Z_OK;
+}
+
+
+int
+zutil_inf(FILE *dest, FILE *source, int *blks) {
+  int ret;
   long          bsz;
 
   (*blks) = 0;
@@ -51,63 +170,10 @@ zutil_inf(FILE *dest, FILE *source, int *blks) {
       return Z_DATA_ERROR;
     }
 
-    // Init inflate state
-    strm.zalloc   = Z_NULL;
-    strm.zfree    = Z_NULL;
-    strm.opaque   = Z_NULL;
-    strm.avail_in = 0;
-    strm.next_in  = Z_NULL;
-    ret = inflateInit(&strm);
+    // Inflate block
+    ret = inflate_block(dest, source, bsz);
     if (ret != Z_OK) {
       return ret;
-    }
-
-    // Decompress until we have processed bsz bytes
-    do {
-      strm.avail_in = fread(in, 1, ((bsz>=CHUNK)?(CHUNK):(bsz)), source);
-      if (ferror(source)) {
-        inflateEnd(&strm);
-        return Z_ERRNO;
-      }
-      if (strm.avail_in == 0) {
-        return Z_DATA_ERROR;
-      }
-      strm.next_in = in;
-      bsz -= strm.avail_in;
-      /* run inflate() on input until output buffer not full */
-      do {
-        strm.avail_out = CHUNK;
-        strm.next_out = out;
-
-        ret = inflate(&strm, Z_NO_FLUSH);
-        switch (ret) {
-        case Z_NEED_DICT:
-          ret = Z_DATA_ERROR;
-        case Z_DATA_ERROR:
-        case Z_MEM_ERROR:
-          inflateEnd(&strm);
-          return ret;
-        case Z_STREAM_ERROR:
-          return Z_STREAM_ERROR;
-        }
-
-        have = CHUNK - strm.avail_out;
-        if (fwrite(out, 1, have, dest) != have || ferror(dest)) {
-          inflateEnd(&strm);
-          return Z_ERRNO;
-        }
-      } while (strm.avail_out == 0);
-
-      // Done when inflate() says it's done
-    } while (ret != Z_STREAM_END);
-
-    // clean up
-    inflateEnd(&strm);
-
-    // If the stream ended before using all the data
-    // in the block, return error.
-    if (bsz) {
-      return Z_DATA_ERROR;
     }
 
     // Increment number of blocks count

@@ -69,7 +69,7 @@ print_file (const char *fpath)
   }
 
   // Decompress the file
-  if (zutil_inf(out, f, &blks) != Z_OK) {
+  if (zutil_inf2(out, f, &blks) != Z_OK) {
     if (ignore_errors_flag) {
       error(0, errno, "%s: extraction failed, skipping", fpath);
       return 0;

@@ -1151,7 +1151,7 @@ static long ZCompress(void *source, int sz, void *dest, int level)
   int            blk,tw=sz;
   int            rv,flush;
   unsigned       ndata;
-  long           len=0;
+  uint32_t       len=0;
   
   // Init zlib state
   strm.zalloc = Z_NULL;
@@ -1213,7 +1213,7 @@ static long ZCompress(void *source, int sz, void *dest, int level)
 
   // Now that the compressed data is coppied, copy the size of the compressed block to
   // the front of the block.  Then return the total size including the size field.
-  return (*((long*)dest) = len) + sizeof(len);
+  return (*((uint32_t*)dest) = len) + sizeof(len);
 }
 
 

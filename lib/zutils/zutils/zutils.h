@@ -18,6 +18,9 @@ typedef struct
    is an error reading or writing the files. */
 int zutil_inf(FILE *dest, FILE *source, int *blks);
 
+/* Same as above, but version 2 format */
+int zutil_inf2(FILE *dest, FILE *source, int *blks);
+
 /* Count number of blocks in file source until stream ends.
    returns Z_OK on success and Z_DATA_ERROR on erroneous data or file
 	 access issues. */
