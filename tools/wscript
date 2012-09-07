@@ -14,6 +14,8 @@ def build(bld):
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
     bld.program(source='src/compressfasta.c', target='compressfasta0',
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
+    bld.program(source='src/splitfasta.c', target='splitfasta')
+    bld.program(source='src/samplefasta.c', target='samplefasta')
 
     # MOL2 tools
     bld.program(source='src/compressmol2.c', target='compressmol2', use='cliutils zutils')
