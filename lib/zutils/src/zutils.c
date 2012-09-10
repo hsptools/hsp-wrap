@@ -106,7 +106,7 @@ zutil_inf2(FILE *dest, FILE *source, int *blks) {
   const size_t block_hdr_size = sizeof(uint32_t) + sizeof(uint32_t);
 
   uint32_t block_size;
-  uint64_t data_size;
+  long     data_size;
   uint16_t block_cnt;
   int      ret;
 

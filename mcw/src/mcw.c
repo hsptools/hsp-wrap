@@ -1100,7 +1100,8 @@ static void* Worker(void *arg)
   }
 
   Vprint(SEV_DEBUG,"Slave %d Worker %d done; exiting.\n",SlaveInfo.rank,wid);
-  Worker_FreeArgv(argv);
+  //Fixme: for real
+  //Worker_FreeArgv(argv);
   return NULL;
 }
 
