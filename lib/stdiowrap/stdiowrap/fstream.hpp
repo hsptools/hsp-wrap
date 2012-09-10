@@ -1,5 +1,5 @@
-#ifndef STDIOWRAP_FSTREAM_H__
-#define STDIOWRAP_FSTREAM_H__
+#ifndef STDIOWRAP_FSTREAM_HPP__
+#define STDIOWRAP_FSTREAM_HPP__
 
 // Make it easier to inject this source, squash errors if included into C source
 #ifdef __cplusplus
@@ -111,7 +111,7 @@ namespace std {
 #endif
 
 #else  // __cplusplus
-#  warning "fstreamwrap.h included in Non-C++ source"
+#  warning "stdiowrap/fstream.hpp included in Non-C++ source"
 #endif // __cplusplus
 
-#endif // STDIOWRAP_FSTREAM_H__
+#endif // STDIOWRAP_FSTREAM_HPP__

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <streambuf>
 
-#include "stdiowrap/fstream.h"
+#include "stdiowrap/fstream.hpp"
 
 namespace stdiowrap {
 

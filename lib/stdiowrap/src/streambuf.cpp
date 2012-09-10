@@ -2,7 +2,7 @@
 #include <iostream>
 #include <streambuf>
 
-#include "stdiowrap/streambuf.h"
+#include "stdiowrap/streambuf.hpp"
 #include "stdiowrap/stdiowrap.h"
 
 #define BAD_HANDLE ((FILE*)-1)

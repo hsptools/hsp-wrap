@@ -37,6 +37,7 @@
 // Include local header
 #define STDIOWRAP_C
 #include "stdiowrap/stdiowrap.h"
+#include "stdiowrap-internal.h"
 
 
 // SHM list SHM

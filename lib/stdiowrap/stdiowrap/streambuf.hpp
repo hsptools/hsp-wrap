@@ -1,5 +1,8 @@
-#ifndef STREAMBUFWRAP_H
-#define STREAMBUFWRAP_H
+#ifndef STDIOWRAP_STREAMBUF_HPP__
+#define STDIOWRAP_STREAMBUF_HPP__
+
+// Make it easier to inject this source, squash errors if included into C source
+#ifdef __cplusplus
 
 #include <fstream>
 #include <iostream>
@@ -59,4 +62,8 @@ class streambuf : public std::streambuf
 
 }
 
-#endif
+#else  // __cplusplus
+#  warning "stdiowrap/streambuf.hpp included in Non-C++ source"
+#endif // __cplusplus
+
+#endif // STDIOWRAP_STREAMBUF_HPP__
