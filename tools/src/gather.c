@@ -107,6 +107,7 @@ main(int argc, char **argv)
     {
       {"directory",     required_argument, 0, 'd'},
       {"output",        required_argument, 0, 'o'},
+      {"force",         no_argument,       0, 'f'},
       {"ignore-errors", no_argument,       0, 'i'},
       {"help",          no_argument,       0, '#'},
       {"version",       no_argument,       0, '^'},

@@ -331,12 +331,109 @@ zutil_compress_write(FILE *dest, void *source, int sz, int level) {
     fprintf(stderr,"Failed to write len.  Terminating.\n");
     exit(1);
   }
-  //fprintf(stderr,"insz:\t%d\ncmpzsz:\t %ld\n",sz,len);
+  // Back to the end of the file
   if( fseek(dest,0,SEEK_END) ) {
     fprintf(stderr,"Could not seek to end.  Terminating.\n");
     exit(1);
   }
 
+}
+
+
+// TODO: Replace error messages with status codes.
+// TODO: Replace exit() with return()
+// TODO: Add utility function for status code to string
+void
+zutil_compress_stream(FILE *dest, FILE *source, int level) {
+  z_stream       strm;
+  unsigned char  in[CHUNK], *out;
+  size_t         out_sz;
+  int            blk;
+  int            rv, flush;
+  long           len;
+
+  // Init zlib state
+  strm.zalloc = Z_NULL;
+  strm.zfree  = Z_NULL;
+  strm.opaque = Z_NULL;
+  rv = deflateInit(&strm, level);
+  if (rv != Z_OK) {
+    fprintf(stderr,"Failed to init zlib.  Terminating.\n");
+    exit(1);
+  }
+
+  // Initial output buffer
+  out_sz = CHUNK * 2;
+  if (!(out = malloc(out_sz))) {
+    fprintf(stderr, "Failed to malloc output buffer.  Terminating.\n");
+    exit(1);
+  }
+
+  // Compress while there is still data to write
+  do {
+    // Read a chunk, determine if error
+    blk = fread(in, 1, CHUNK, source);
+    if (blk < CHUNK) {
+      if (feof(source)) {
+	flush = Z_FINISH;
+      } else {
+	// TODO: error.. ferror
+      }
+    } else {
+      flush = Z_NO_FLUSH;
+    }
+    strm.avail_in = blk;
+    strm.next_in  = in;
+
+    do {
+      // Get more space if we need it
+      if (out_sz < strm.total_out + CHUNK) {
+	out_sz *= 2;
+	if (!(out = realloc(out, out_sz))) {
+	  fprintf(stderr, "Failed to realloc output buffer.  Terminating.\n");
+	  exit(1);
+	}
+      }
+      // Setup output and compress
+      strm.avail_out = out_sz - strm.total_out;
+      strm.next_out  = out + strm.total_out;
+      rv = deflate(&strm, flush);
+      if (rv == Z_STREAM_ERROR) {
+        fprintf(stderr,"Failed to compress output block.  Terminating.\n");
+        exit(1);
+      }
+    } while (strm.avail_out == 0);
+    // Sanity check
+    if (strm.avail_in != 0) {
+      fprintf(stderr,"Did not fully compress block.  Terminating.\n");
+      exit(1);
+    }
+  } while (flush != Z_FINISH);
+
+  // Another sanity check
+  if (rv != Z_STREAM_END) {
+    fprintf(stderr,"Didn't finish compression properly.  Terminating.\n");
+    exit(1);
+  }
+
+  // Now that the compressed data is computed, write the
+  // size of the compressed block at the front of the block
+  len = strm.total_out;
+  if (fwrite(&len, sizeof(len), 1, dest) != 1) {
+    fprintf(stderr, "Failed to write len.  Terminating.\n");
+    exit(1);
+  }
+  // Finally, write all of the data
+  if (fwrite(out, 1, len, dest) != len) {
+    fprintf(stderr, "Failed to write compressed data.  Terminating.\n");
+    exit(1);
+  }
+
+  // Cleanup
+  deflateEnd(&strm);
+
+  // And free buffer
+  free(out);
 }
 
 

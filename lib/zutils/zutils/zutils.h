@@ -37,6 +37,7 @@ int zutil_blk_iter(FILE *source, long *bsz);
 // Special thanks to Mark Adler for providing the non-copyrighted
 // public domain example program "zpipe.c", from which this function
 // is based (Version 1.4  December 11th, 2005).
-int zutil_compress_write(FILE *dest, void *source, int sz, int level);
+void zutil_compress_write(FILE *dest, void *source, int sz, int level);
+void zutil_compress_stream(FILE *dest, FILE *source, int level);
 
 #endif
