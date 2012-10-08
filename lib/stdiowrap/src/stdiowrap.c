@@ -588,6 +588,7 @@ extern size_t stdiowrap_fwrite(const void *ptr, size_t size, size_t nmemb, FILE 
   // Check bounds
   if( (wf->pos+size) > (wf->data+wf->tsize) ) {
     // No room for even one element
+    errno = ENOSPC;
     return 0;
   }
   if( (wf->pos+size*nmemb) > (wf->data+wf->tsize) ) {
@@ -609,6 +610,56 @@ extern size_t stdiowrap_fwrite(const void *ptr, size_t size, size_t nmemb, FILE 
 
   // Return item count
   return nmemb;
+}
+
+
+extern int stdiowrap_fputs(const char *s, FILE *stream)
+{
+  MAP_WF_E(wf, stream, -1);
+  const char *p = s;
+
+  // Copy bytes until end of string or no space avail
+  while (*p != '\0' && wf->pos < wf->data+wf->tsize) {
+    *(wf->pos++) = *(p++);
+  }
+
+  // Didn't make it to end of string, space must be limited. Error.
+  if (*p != '\0') {
+    errno = ENOSPC;
+    return EOF;
+  }
+
+  // Update sizes
+  wf->size += (p-s);
+  *(wf->psize) = wf->size;
+
+  // Great success
+  return 1;
+}
+
+
+extern int stdiowrap_fputc (int c, FILE *stream)
+{
+  MAP_WF_E(wf, stream, EOF);
+
+  // Make sure there is room for a character to be written
+  if( wf->pos >= (wf->data+wf->tsize) ) {
+    errno = ENOSPC;
+    return EOF;
+  }
+
+  // Write and update sizes
+  *(wf->pos++) = (char)c & 0xFF;
+  wf->size++;
+  *(wf->psize) = wf->size;
+
+  return c;
+}
+
+
+extern int stdiowrap_putc (int c, FILE *stream)
+{
+  return stdiowrap_fputc(c, stream);
 }
 
 

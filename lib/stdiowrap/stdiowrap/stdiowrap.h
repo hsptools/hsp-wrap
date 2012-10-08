@@ -32,7 +32,13 @@
 #    define getc(a)          stdiowrap_getc((a))
 #    define fflush(a)        stdiowrap_fflush((a))
 #    define fwrite(a,b,c,d)  stdiowrap_fwrite((a),(b),(c),(d))
+#    define fputs(a,b)       stdiowrap_fputs((a),(b))
+#    define fputc(a,b)       stdiowrap_fputc((a),(b))
 #    define fprintf(...)     stdiowrap_fprintf(__VA_ARGS__)
+#    ifdef putc
+#      undef putc
+#    endif
+#    define putc(a,b)        stdiowrap_putc((a),(b))
 #  endif
 #endif
 
@@ -63,6 +69,9 @@ int     stdiowrap_fscanf (FILE *stream, const char *format, ...);
 // Write
 int     stdiowrap_fflush  (FILE *stream);
 size_t  stdiowrap_fwrite  (const void *ptr, size_t size, size_t nmemb, FILE *stream);
+int     stdiowrap_fputs   (const char *ptr, FILE *stream);
+int     stdiowrap_fputc   (int c, FILE *stream);
+int     stdiowrap_putc    (int c, FILE *stream);
 int     stdiowrap_fprintf (FILE *stream, const char *format, ...);
 
 #ifdef __cplusplus
