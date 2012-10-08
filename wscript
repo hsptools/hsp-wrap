@@ -15,12 +15,22 @@ out = 'build'
 tool_dir = 'waf-tools'
 
 def options(opt):
+    default_num_cores = 12
+    default_buffer_size = (1<<27)
+
     opt.load('compiler_c compiler_cxx')
     opt.load('compiler_mpi_c', tooldir=tool_dir)
 
-    opt.add_option('--debug', action='store_true', help='Build programs with debugging symbols')
-    opt.add_option('--num-cores', action='store', type='int', default=12, help='Number of cores to utilize in wrapper')
-    opt.add_option('--result-buffer-size', action='store', type='int', default=(1<<27), help='Size of wrapper output buffer')
+    opt.add_option('--debug', action='store_true',
+                   help='Build programs with debugging symbols')
+
+    opt.add_option('--num-cores', action='store', type='int',
+                   default=default_num_cores,
+                   help='Number of cores to utilize in wrapper [default: %s]' % default_num_cores)
+
+    opt.add_option('--result-buffer-size', action='store', type='int',
+                   default=default_buffer_size,
+                   help='Size of wrapper output buffer [default: %s]' % default_buffer_size)
 
 def configure(conf):
     conf.load('compiler_c compiler_cxx')
@@ -41,18 +51,18 @@ def configure(conf):
                 args=['--cflags', '--libs'])
     except:
         conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
-                uselib_store='ZLIB', define_name='HAVE_ZLIB',
+                uselib_store='ZLIB',
                 msg="Checking for any 'zlib'")
 
     # std Math
-    conf.check_cc(lib='m', header_name='math.h', function_name='sinf',
-            uselib_store='M', define_name='HAVE_MATH',
+    conf.check_cc(lib='m', uselib_store='M',
             msg="Checking for 'libm' (math library)")
 
     # libexpat1
-    conf.check_cc(lib='expat', header_name='expat.h', function_name='XML_ParserCreate',
-            uselib_store='EXPAT', define_name='HAVE_EXPAT',
-            msg="Checking for 'Expat'")
+    foo = conf.check_cc(lib='expat', header_name='expat.h', function_name='XML_ParserCreate',
+        uselib_store='EXPAT', define_name='HAVE_EXPAT', mandatory=False,
+        msg="Checking for 'Expat'")
+    conf.env['HAVE_LIBEXPAT'] = foo
 
     # MySQL
     if mysql_config:
@@ -60,14 +70,11 @@ def configure(conf):
                 package='', uselib_store='MYSQL', msg="Checking for 'MySQL'")
 
         conf.env['VERSION_MYSQL'] = conf.cmd_and_log([mysql_config,'--version'])
-    else:
-        # TODO: Move to a summary after the configuration process
-        Logs.warn('MySQL library could not be found.  Database related tools will not be built.')
 
     # nftw from ftw.h (File Tree Walk)
     conf.env.stash()
     try:
-        conf.env.DEFINES = ['_XOPEN_SOURCE=500']
+        conf.env.DEFINES += ['_XOPEN_SOURCE=500']
         conf.check_cc(header_name='ftw.h', function_name='nftw',
                 uselib_store='FTW')
     finally:
@@ -79,6 +86,12 @@ def configure(conf):
     conf.define('MCW_RESULTBUFF_SIZE', conf.options.result_buffer_size)
     conf.define('HSP_VERSION',         VERSION)
     conf.write_config_header('hsp-config.h')
+
+    # Summary
+    if not mysql_config:
+        Logs.warn('MySQL library could not be found.  Database related tools will not be built.')
+    if not foo:
+	Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
     bld.recurse('lib mcw tools')

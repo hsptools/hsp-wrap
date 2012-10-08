@@ -30,4 +30,5 @@ def build(bld):
     bld.program(source='src/zextract.c', target='zextract', use='zutils')
     bld.program(source='src/zsplit.c', target='zsplit', use='ioutils cliutils')
     bld.program(source='src/zstat.c', target='zstat', use='zutils')
-    bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
+    if bld.env['HAVE_LIBEXPAT']:
+        bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
