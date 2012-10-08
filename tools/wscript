@@ -15,7 +15,7 @@ def build(bld):
     bld.program(source='src/compressfasta.c', target='compressfasta0',
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
     bld.program(source='src/splitfasta.c', target='splitfasta')
-    bld.program(source='src/samplefasta.c', target='samplefasta')
+    bld.program(source='src/samplefasta.c', target='samplefasta', use='cliutils ioutils')
 
     # MOL2 tools
     bld.program(source='src/compressmol2.c', target='compressmol2', use='cliutils zutils')
@@ -26,8 +26,8 @@ def build(bld):
 
     # Special tools
     bld.program(source='src/gather.c', target='gather', use='ioutils strutils cliutils zutils')
-    bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
     bld.program(source='src/zcompress.c', target='zcompress', use='ioutils cliutils zutils')
     bld.program(source='src/zextract.c', target='zextract', use='zutils')
     bld.program(source='src/zsplit.c', target='zsplit', use='ioutils cliutils')
     bld.program(source='src/zstat.c', target='zstat', use='zutils')
+    bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
