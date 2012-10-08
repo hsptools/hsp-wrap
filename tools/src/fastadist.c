@@ -42,12 +42,12 @@ typedef struct {
 
 static int AA_Count(char *seq)
 {
-  char *p;
+  char *lp, *p;
   int   nl,aa;
 
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
-  for(nl=aa=0,p=seq+1; (p<nfo.equery) && (*p != '>'); p++) {
+  for(nl=aa=0,lp=seq,p=seq+1; (p<nfo.equery) && !(*p == '>' && *lp == '\n'); lp=p, p++) {
     if( (*p == '\n') || (*p == '\r') ) {
       nl = 1;
     } else if( nl && (*p != ' ') && (*p != '\t') ) {
@@ -63,11 +63,11 @@ static int AA_Count(char *seq)
 // Finds the length of the query sequence seq
 static int Sequence_Length(char *seq)
 {
-  char *p;
+  char *lp, *p;
 
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
-  for(p=seq+1; (p<nfo.equery) && (*p != '>'); p++);
+  for(lp = seq, p=seq+1; (p<nfo.equery) && !(*p == '>' && *lp == '\n'); lp=p, p++);
   
   // Return the diff of start and end
   return ((int)(p-seq));
@@ -172,14 +172,15 @@ int main(int argc, char **argv)
   Init_Sequences(argv[1]);
 
   // Build array of pointers to the sequences
-  while( (seq = Get_Sequence()) ) {
+  seq = nfo.queries;
+  do {
     nfo.nsequences++;
     if( !(nfo.sequences = realloc(nfo.sequences,nfo.nsequences*sizeof(char*))) ) {
       fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
       exit(1);
     }
     nfo.sequences[nfo.nsequences-1] = seq;
-  }
+  } while( (seq = Get_Sequence()) );
 
   // Build an array for dist
   for(max=mlen=i=0,dist=NULL; i<nfo.nsequences; i++) {
@@ -187,7 +188,7 @@ int main(int argc, char **argv)
     // !!av: Do I really want total length?
     //       AA count would be a much better thing to use here...
     if( !(aac=AA_Count(nfo.sequences[i])) ) {
-      fprintf(stderr,"NULL sequence found. Terminating.\n");
+      fprintf(stderr,"NULL sequence found (sequence %d). Terminating.\n", i);
       exit(1);
     }
     // Expand array size if needed
@@ -214,7 +215,7 @@ int main(int argc, char **argv)
   // Print out distribution array
   for(i=0; i<mlen; i++) {
     if( dist[i].count ) { 
-      fprintf(stderr,"%d %d %f\n",i,dist[i].count,dist[i].count/((float)max));
+      printf("%d %d %f\n",i,dist[i].count,dist[i].count/((float)max));
     }
   }
 

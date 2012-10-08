@@ -68,12 +68,12 @@ static char* GetID(char *seq)
 // Returns total number of AA in seq
 static int CountAA(char *seq)
 {
-  char *p;
+  char *lp, *p;
   int   aa=-1;
   
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
-  for(p=seq+1; (p<nfo.equery) && (*p != '>'); p++) {
+  for(lp=seq,p=seq+1; (p<nfo.equery) && !(*p == '>' && *lp == '\n'); lp=p, p++) {
     // Only start counting after comment/id line.
     if( (aa == -1) && (*p == '\n') ) {
       aa = 0;
@@ -92,11 +92,11 @@ static int CountAA(char *seq)
 // Finds the length of the query sequence seq
 static int Sequence_Length(char *seq)
 {
-  char *p;
+  char *lp, *p;
 
   // Look forward until end of sequences are found or
   // new sequence start '>' is found.
-  for(p=seq+1; (p<nfo.equery) && (*p != '>'); p++);
+  for(lp=seq,p=seq+1; (p<nfo.equery) && !(*p == '>' && *lp == '\n'); lp=p, p++);
   
   // Return the diff of start and end
   return ((int)(p-seq));
@@ -174,12 +174,15 @@ int main(int argc, char **argv)
   Init_Sequences(argv[1]);
 
   // For each sequence in fasta file
-  for(i=0; (seq = Get_Sequence()); i++) {
+  seq = nfo.queries;
+  i   = 0;
+  do {
     // Print the ID name in column 1 and the sequence length in column 2
     id = GetID(seq);
     printf("%s\t%d\n",id,CountAA(seq));
     free(id);
-  }
+    i++;
+  } while( (seq = Get_Sequence()) );
 
   // Return success
   return 0;
