@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <error.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -7,9 +9,18 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
+typedef int  (*handler_t)(void *, const char *, char *, int);
+typedef void (*clear_t)(void *);
 
 typedef struct st_userdata {
-  int   depth;
+  int       depth;
+  char     *text;
+  handler_t handler;
+  clear_t   clear;
+  void     *state;
+} userdata_t;
+
+typedef struct st_tab_state {
   char *Iteration_query_def;
   char *BlastOutput_query_def;
   char *Hit_id;
@@ -19,9 +30,14 @@ typedef struct st_userdata {
   char *Hsp_query_to;
   char *Hsp_hit_from;
   char *Hsp_hit_to;
-  char *text;
-} userdata_t;
+} tab_state_t;
 
+typedef struct st_hits_state {
+  char *Hit_def;
+  char *Hsp_hseq;
+  int   out_num;
+  FILE *out_file;
+} hits_state_t;
 
 #ifndef iswhite
 #define iswhite(c) ( ((c) == ' ') || ((c) == '\t') || ((c) == '\n') )
@@ -119,7 +135,7 @@ char* ClipOrganism(char *src)
 }
 
 
-void PrintHit(userdata_t *ud)
+void PrintHit(tab_state_t *ud)
 {
   char   *protID,*protID1,*organism,altid[1024];
   double  ev;
@@ -227,116 +243,179 @@ void endElement(void *userData, const char *name)
 {
   userdata_t *ud = (userdata_t*)userData;
 
-
-  // See if we need to save the previous block of text
-  if( !strcmp(name,"Iteration_query-def") ) {
-    if( ud->Iteration_query_def ) {
-      free(ud->Iteration_query_def);
-    }
-    ud->Iteration_query_def = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"BlastOutput_query-def") ) {
-    if( ud->BlastOutput_query_def ) {
-      free(ud->BlastOutput_query_def);
-    }
-    ud->BlastOutput_query_def = ud->text;;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hit_id") ) {
-    if( ud->Hit_id ) {
-      free(ud->Hit_id);
-    }
-    ud->Hit_id = ud->text;;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hit_def") ) {
-    if( ud->Hit_def ) {
-      free(ud->Hit_def);
-    }
-    ud->Hit_def = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hsp_evalue") ) {
-    if( ud->Hsp_evalue ) {
-      free(ud->Hsp_evalue);
-    }
-    ud->Hsp_evalue = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hsp_query-from") ) {
-    if( ud->Hsp_query_from ) {
-      free(ud->Hsp_query_from);
-    }
-    ud->Hsp_query_from = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hsp_query-to") ) {
-    if( ud->Hsp_query_to ) {
-      free(ud->Hsp_query_to);
-    }
-    ud->Hsp_query_to = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hsp_hit-from") ) {
-    if( ud->Hsp_hit_from ) {
-      free(ud->Hsp_hit_from);
-    }
-    ud->Hsp_hit_from = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hsp_hit-to") ) {
-    if( ud->Hsp_hit_to ) {
-      free(ud->Hsp_hit_to);
-    }
-    ud->Hsp_hit_to = ud->text;
-    ud->text = NULL;
-  } else if( !strcmp(name,"Hit") ){
-    // We have ended a hit; print it out.
-    PrintHit(ud);
-    if( ud->text ) {
-      free(ud->text);
-    }
-    ud->text = NULL;
-  } else {
-    if( ud->text ) {
-      free(ud->text);
-    }
-    ud->text = NULL;
+  if (!ud->handler(ud->state, name, ud->text, ud->depth)
+      && ud->text) {
+    // Text was not consumed, free it
+    free(ud->text);
   }
+  ud->text = NULL;
 
   // Decrement depth
   ud->depth--;
 }
 
 
-////////////////////////////////////////////////////////////////////////////////
-
-
 void ClearUD(userdata_t *ud)
 {
-  if( ud->Iteration_query_def ) {
-    free(ud->Iteration_query_def);
-  }
-  if( ud->Hit_id ) {
-    free(ud->Hit_id);
-  }
-  if( ud->Hit_def ) {
-    free(ud->Hit_def);
-  }
-  if( ud->Hsp_evalue ) {
-    free(ud->Hsp_evalue);
-  }
-  if( ud->Hsp_query_from ) {
-    free(ud->Hsp_query_from);
-  }
-  if( ud->Hsp_query_to ) {
-    free(ud->Hsp_query_to);
-  }
-  if( ud->Hsp_hit_from ) {
-    free(ud->Hsp_hit_from);
-  }
-  if( ud->Hsp_hit_to ) {
-    free(ud->Hsp_hit_to);
-  }
   if( ud->text ) {
     free(ud->text);
   }
-  memset(ud, 0, sizeof(userdata_t));
+  ud->clear(ud->state);
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+int tab_handleElement(void *state, const char *name, char *text, int depth)
+{
+  tab_state_t *st = (tab_state_t*)state;
+
+  // See if we need to save the previous block of text
+  if( !strcmp(name,"Iteration_query-def") ) {
+    if( st->Iteration_query_def ) {
+      free(st->Iteration_query_def);
+    }
+    st->Iteration_query_def = text;
+  } else if( !strcmp(name,"BlastOutput_query-def") ) {
+    if( st->BlastOutput_query_def ) {
+      free(st->BlastOutput_query_def);
+    }
+    st->BlastOutput_query_def = text;
+  } else if( !strcmp(name,"Hit_id") ) {
+    if( st->Hit_id ) {
+      free(st->Hit_id);
+    }
+    st->Hit_id = text;
+  } else if( !strcmp(name,"Hit_def") ) {
+    if( st->Hit_def ) {
+      free(st->Hit_def);
+    }
+    st->Hit_def = text;
+  } else if( !strcmp(name,"Hsp_evalue") ) {
+    if( st->Hsp_evalue ) {
+      free(st->Hsp_evalue);
+    }
+    st->Hsp_evalue = text;
+  } else if( !strcmp(name,"Hsp_query-from") ) {
+    if( st->Hsp_query_from ) {
+      free(st->Hsp_query_from);
+    }
+    st->Hsp_query_from = text;
+  } else if( !strcmp(name,"Hsp_query-to") ) {
+    if( st->Hsp_query_to ) {
+      free(st->Hsp_query_to);
+    }
+    st->Hsp_query_to = text;
+  } else if( !strcmp(name,"Hsp_hit-from") ) {
+    if( st->Hsp_hit_from ) {
+      free(st->Hsp_hit_from);
+    }
+    st->Hsp_hit_from = text;
+  } else if( !strcmp(name,"Hsp_hit-to") ) {
+    if( st->Hsp_hit_to ) {
+      free(st->Hsp_hit_to);
+    }
+    st->Hsp_hit_to = text;
+  } else if( !strcmp(name,"Hit") ){
+    // We have ended a hit; print it out.
+    PrintHit(st);
+    return 0;
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+
+void tab_clearState(void *state)
+{
+  tab_state_t *st = (tab_state_t*)state;
+
+  if( st->Iteration_query_def ) {
+    free(st->Iteration_query_def);
+  }
+  if( st->Hit_id ) {
+    free(st->Hit_id);
+  }
+  if( st->Hit_def ) {
+    free(st->Hit_def);
+  }
+  if( st->Hsp_evalue ) {
+    free(st->Hsp_evalue);
+  }
+  if( st->Hsp_query_from ) {
+    free(st->Hsp_query_from);
+  }
+  if( st->Hsp_query_to ) {
+    free(st->Hsp_query_to);
+  }
+  if( st->Hsp_hit_from ) {
+    free(st->Hsp_hit_from);
+  }
+  if( st->Hsp_hit_to ) {
+    free(st->Hsp_hit_to);
+  }
+  memset(st, 0, sizeof(tab_state_t));
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+int hits_handleElement(void *state, const char *name, char *text, int depth)
+{
+  hits_state_t *st = (hits_state_t*)state;
+
+  // See if we need to save the previous block of text
+  if( !strcmp(name,"Hit_def") ) {
+    if( st->Hit_def ) {
+      free(st->Hit_def);
+    }
+    st->Hit_def = text;
+  } else if( !strcmp(name,"Hsp_hseq") ) {
+    if( st->Hsp_hseq ) {
+      free(st->Hsp_hseq);
+    }
+    st->Hsp_hseq = text;
+  } else if( !strcmp(name,"Hit") ){
+    // We have ended a hit; print it out.
+    fprintf(st->out_file, ">%s\n%s\n", st->Hit_def, st->Hsp_hseq);
+    return 0;
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+
+void hits_clearState(void *state)
+{
+  hits_state_t *st = (hits_state_t*)state;
+  char  fn[FILENAME_MAX];
+  int   num;
+
+  num = st->out_num;
+  if( st->Hit_def ) {
+    free(st->Hit_def);
+  }
+  if( st->Hsp_hseq) {
+    free(st->Hsp_hseq);
+  }
+  if (st->out_file) {
+    fclose(st->out_file);
+  }
+  memset(st, 0, sizeof(hits_state_t));
+
+  sprintf(fn, "hits%04d", num); 
+  if (!(st->out_file = fopen(fn, "wr"))) {
+    error(EXIT_FAILURE, errno, "%s: Could not open file for writing", fn);
+  }
+  st->out_num  = num + 1;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char **argv)
 {
@@ -358,10 +437,24 @@ int main(int argc, char **argv)
     exit(1);
   }
 
-  // Parse
   line = 0;
   memset(&ud,     0, sizeof(ud));
   memset(&parser, 0, sizeof(XML_Parser));
+
+  if (0) {
+    ud.handler = tab_handleElement;
+    ud.clear   = tab_clearState;
+    ud.state   = malloc(sizeof(tab_state_t));
+    memset(ud.state, 0, sizeof(tab_state_t));
+  } else {
+    ud.handler = hits_handleElement;
+    ud.clear   = hits_clearState;
+    ud.state   = malloc(sizeof(hits_state_t));
+    memset(ud.state, 0, sizeof(hits_state_t));
+  }
+  ud.clear(ud.state);
+
+  // Parse
   do {
     // Read a line
     if( !fgets(buf,sizeof(buf),f) ) {
@@ -402,11 +495,11 @@ int main(int argc, char **argv)
       if( sizeof(XML_Size) == 8 ) {
         fprintf(stderr, "%s at parser line %llu\n",
 		XML_ErrorString(XML_GetErrorCode(parser)),
-		*((long long unsigned int*)&xml_line));
+		((long long unsigned int)xml_line));
       } else {
         fprintf(stderr, "%s at parser line %u\n",
 		XML_ErrorString(XML_GetErrorCode(parser)),
-		*((unsigned int*)&xml_line));
+		((unsigned int)xml_line));
       }
       fprintf(stderr,"Global line: %d\n",line);
       fprintf(stderr, "byte: %ld\ncontext: %s\n",
