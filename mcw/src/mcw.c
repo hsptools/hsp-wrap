@@ -843,6 +843,9 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
   if( (pid=fork()) > 0 ) {
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
+    // Wait for child process to start
+    sleep(2);
+    sigusr_forkunlock(0);
     // Wait for child to finish; handle its IO
     io_time = Worker_ChildIO(rank,pid,wid,bid,qndxs,rndxs);
   } else if( !pid ) {
