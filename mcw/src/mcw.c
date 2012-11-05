@@ -296,11 +296,13 @@ static void* Create_DBSHM(char *name, long shmsz)
 
 
 // Returns a pointer to the start of the next sequence
-static seq_data_t Get_SequenceBlocks(int *size, int *blocks)
+static seq_data_t Get_SequenceBlocks(int *size, int *blocks, int blks_per_wu)
 {
-  static int qndx=0,f1=0,f2=0;
-  double     pd;
-  int        i,sz;
+  compressedb_t *cb;
+  static int     qndx=0,f1=0,f2=0;
+  double         pd;
+  int            i,j,sz;
+  off_t          off;
 
   // Make sure the current (next to be returned) is in bounds
   if( qndx >= MasterInfo.nqueries ) {
@@ -340,7 +342,12 @@ static seq_data_t Get_SequenceBlocks(int *size, int *blocks)
 
   // "Aquire" the requested blocks
   for(i=sz=0; (i < (*blocks)) && (qndx < MasterInfo.nqueries); i++,qndx++) {
-    sz += MasterInfo.queries[qndx]->len+sizeof(MasterInfo.queries[qndx]->len);
+    for(j=0,off=0; j < blks_per_wu; j++) {
+      // Nasty hack to iterate through compressed blocks to build transfer block
+      cb = ((void *)MasterInfo.queries[qndx]) + off;
+      off += cb->len + sizeof(cb->len);
+    }
+    sz += off;
   }
 
   // Return the blocks and metadata
@@ -350,12 +357,12 @@ static seq_data_t Get_SequenceBlocks(int *size, int *blocks)
 }
 
 
-// Opens and maps the input query file
+// Opens and maps the input query files
 static void Init_Queries(char *fn)
 {
   struct stat    statbf;
   compressedb_t *cb;
-  int            f;
+  int            f, i;
   
 
   // Open and memory map the input sequence file
@@ -378,14 +385,20 @@ static void Init_Queries(char *fn)
   // Build array of pointers to block structs from raw map
   MasterInfo.nqueries = 0;
   MasterInfo.queries  = NULL;
-  for(cb=(compressedb_t*)MasterInfo.qmap; cb<(compressedb_t*)(MasterInfo.qmap+statbf.st_size); cb=((void*)cb)+cb->len+sizeof(cb->len)) {
-    // Start of new compressed block
-    MasterInfo.nqueries++;
-    if( !(MasterInfo.queries=realloc(MasterInfo.queries,MasterInfo.nqueries*sizeof(compressedb_t*))) ) {
-      Vprint(SEV_ERROR,"Master failed to realloc() compressed input block array. Terminating.\n");
-      Abort(1);
+  for(i=0,cb=(compressedb_t*)MasterInfo.qmap;
+      cb<(compressedb_t*)(MasterInfo.qmap+statbf.st_size);
+      i++,cb=((void*)cb)+cb->len+sizeof(cb->len)) {
+
+    // Only create a new query at the beginning of each "chunk"
+    if (i%args.nq_files == 0) {
+      // Start of new compressed block
+      MasterInfo.nqueries++;
+      if( !(MasterInfo.queries=realloc(MasterInfo.queries,MasterInfo.nqueries*sizeof(compressedb_t*))) ) {
+        Vprint(SEV_ERROR,"Master failed to realloc() compressed input block array. Terminating.\n");
+        Abort(1);
+      }
+      MasterInfo.queries[MasterInfo.nqueries-1] = cb;
     }
-    MasterInfo.queries[MasterInfo.nqueries-1] = cb;
   }
 
   // Compute a reasonable size for a query block
@@ -483,7 +496,7 @@ static void Master(int processes, int rank)
 	Vprint(SEV_NRML,"Master: Slave %d requested %d units, limiting to %d.", index, blkseqs, max_req);
 	//blkseqs = max_req;
       }
-      sequence = Get_SequenceBlocks(&seqsz,&blkseqs);
+      sequence = Get_SequenceBlocks(&seqsz,&blkseqs,args.nq_files);
 
       // Send work unit (inform of incoming sequence)
       mi->slaves[index].workunit.type   = WU_TYPE_SEQS;
@@ -671,7 +684,7 @@ static void Worker_WriteResults(int *rndxs, int wid, int bid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int bid, int qndx, int *rndxs)
+static float Worker_ChildIO(int rank, int pid, int wid, int bid, int *qndxs, int *rndxs)
 {
   struct timeval  st,et;
   int             status,w;
@@ -801,7 +814,7 @@ static void Worker_Child_MapFDs(int rank, int wid)
 #endif
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int qndx, int *rndxs)
+static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int *qndxs, int *rndxs)
 {
   char  name[256],exe_name[256];
   int   pid,node,nodes,loadstride;
@@ -831,7 +844,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,bid,qndx,rndxs);
+    io_time = Worker_ChildIO(rank,pid,wid,bid,qndxs,rndxs);
   } else if( !pid ) {
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
@@ -861,72 +874,68 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
 
 // TODO: PG: Move to libzutils
 #define CHUNK 16384
-int zinf_memcpy(unsigned char *dest, compressedb_t *scb, size_t size, size_t *dcsz)
+int zinf_memcpy(unsigned char *dest, compressedb_t *cb, size_t *dcsz)
 {
-  compressedb_t *cb;
   z_stream       strm;
   unsigned char  in[CHUNK],out[CHUNK],*odest=dest;
   unsigned       have;
   long           bsz;
   int            ret;
 
-
-  for(cb=scb; (void*)cb < ((void*)scb)+size; cb=((void*)cb)+cb->len+sizeof(cb->len)) {
-    // Init inflate state
-    strm.zalloc   = Z_NULL;
-    strm.zfree    = Z_NULL;
-    strm.opaque   = Z_NULL;
-    strm.next_in  = Z_NULL;
-    strm.avail_in = 0;
-    ret = inflateInit(&strm);
-    if( ret != Z_OK ) {
-      fprintf(stderr, "inflate: Could not initialize!\n");
-      return ret;
-    }
-    
-    // Decompress until we have processed bsz bytes
-    bsz = cb->len;
-    do {
-      if( !(strm.avail_in=((bsz>=CHUNK)?(CHUNK):(bsz))) ) {
-        safe_inflateEnd(&strm);
-	fprintf(stderr, "inflate: Could not read data chunk\n");
-        return Z_DATA_ERROR;
-      }
-      memcpy(in, &(cb->data)+cb->len-bsz, strm.avail_in);
-      strm.next_in = in;
-      bsz -= strm.avail_in;
-      // run inflate() on input until output buffer not full
-      do {
-        strm.avail_out = CHUNK;
-        strm.next_out = out;
-        ret = inflate(&strm, Z_NO_FLUSH);
-        switch( ret ) {
-        case Z_BUF_ERROR:
-        case Z_NEED_DICT:
-        case Z_DATA_ERROR:
-        case Z_MEM_ERROR:
-	  fprintf(stderr, "inflate: Error!\n");
-          safe_inflateEnd(&strm);
-        case Z_STREAM_ERROR:
-	  fprintf(stderr, "inflate: Stream Error!\n");
-          return ret;
-        }
-        have = CHUNK - strm.avail_out;
-        memcpy(dest,out,have);
-        dest += have;
-      } while( strm.avail_out == 0 );
-      // Done when inflate() says it's done
-    } while( ret != Z_STREAM_END );
-
-    // clean up
-    safe_inflateEnd(&strm);
-
-    // If the stream ended before using all the data
-    // in the block, return error.
-    if( bsz ) {
-      fprintf(stderr, "inflate: Data Error!\n");
+  // Init inflate state
+  strm.zalloc   = Z_NULL;
+  strm.zfree    = Z_NULL;
+  strm.opaque   = Z_NULL;
+  strm.next_in  = Z_NULL;
+  strm.avail_in = 0;
+  ret = inflateInit(&strm);
+  if( ret != Z_OK ) {
+    fprintf(stderr, "inflate: Could not initialize!\n");
+    return ret;
+  }
+  
+  // Decompress until we have processed bsz bytes
+  bsz = cb->len;
+  do {
+    if( !(strm.avail_in=((bsz>=CHUNK)?(CHUNK):(bsz))) ) {
+      safe_inflateEnd(&strm);
+      fprintf(stderr, "inflate: Could not read data chunk\n");
       return Z_DATA_ERROR;
     }
+    memcpy(in, &(cb->data)+cb->len-bsz, strm.avail_in);
+    strm.next_in = in;
+    bsz -= strm.avail_in;
+    // run inflate() on input until output buffer not full
+    do {
+      strm.avail_out = CHUNK;
+      strm.next_out = out;
+      ret = inflate(&strm, Z_NO_FLUSH);
+      switch( ret ) {
+      case Z_BUF_ERROR:
+      case Z_NEED_DICT:
+      case Z_DATA_ERROR:
+      case Z_MEM_ERROR:
+        fprintf(stderr, "inflate: Error!\n");
+        safe_inflateEnd(&strm);
+      case Z_STREAM_ERROR:
+        fprintf(stderr, "inflate: Stream Error!\n");
+        return ret;
+      }
+      have = CHUNK - strm.avail_out;
+      memcpy(dest,out,have);
+      dest += have;
+    } while( strm.avail_out == 0 );
+    // Done when inflate() says it's done
+  } while( ret != Z_STREAM_END );
+
+  // clean up
+  safe_inflateEnd(&strm);
+
+  // If the stream ended before using all the data
+  // in the block, return error.
+  if( bsz ) {
+    fprintf(stderr, "inflate: Data Error!\n");
+    return Z_DATA_ERROR;
   }
   
   // Return success
@@ -954,45 +963,47 @@ static void GrowSeqData(int new_len)
 }
 
 
+static int find_file_by_name(char *n)
+{
+  int i;
+
+  for (i = 0; i < file_sizes->nfiles; ++i) {
+    if (!strcmp(n, file_sizes->fs[i].name)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+
 static void* Worker(void *arg)
 {
   int             wid = (int)((long)arg);
   struct timeval  st,et,tv;
+  compressedb_t  *cb;
   slaveinfo_t    *si=&SlaveInfo;
   request_t      *request;
   workunit_t     *workunit;
   size_t          dcsz;
   float           t_vi,t_vo,t_ic;
-  int             f,i,q,r[SlaveInfo.nout_files],done=0;
+  int             f,q[args.nq_files],r[SlaveInfo.nout_files],done=0;
   long            ib,idb;
   char            name[256];
   char          **argv;
 
   // Find the in/out SHMs for this worker
-  // Input
-  q = -1;
-  sprintf(name,":STDIN%d",wid*2);
-  for(i=0; i<file_sizes->nfiles; i++) {
-    if( !strcmp(name,file_sizes->fs[i].name) ) {
-      q = i;
-      break;
+  // Inputs
+  for (f = 0; f < args.nq_files; ++f) {
+    sprintf(name, ":MCW:W%d:IN%d", wid, f);
+    if ((q[f] = find_file_by_name(name)) < 0) {
+      Vprint(SEV_ERROR,"Slave %d Worker %d failed to find q I/O SHM. (Pseudo filename: %s)\n",SlaveInfo.rank,wid,name);
+      Abort(1);
     }
-  }
-  if( q == -1 ) {
-    Vprint(SEV_ERROR,"Slave %d Worker %d failed to find q I/O SHM. (Pseudo filename: %s)\n",SlaveInfo.rank,wid,name);
-    Abort(1);
   }
   // Outputs
-  for( f=0; f<SlaveInfo.nout_files; ++f ) {
-    r[f] = -1;
-    sprintf(name,":STDOUT%d:%d",wid*2+1,f);
-    for(i=0; i<file_sizes->nfiles; i++) {
-      if( !strcmp(name,file_sizes->fs[i].name) ) {
-	r[f] = i;
-	break;
-      }
-    }
-    if( r[f] == -1 ) {
+  for (f = 0; f < SlaveInfo.nout_files; ++f) {
+    sprintf(name,":MCW:W%d:OUT%d",wid,f);
+    if ((r[f] = find_file_by_name(name)) < 0) {
       Vprint(SEV_ERROR,"Slave %d Worker %d failed to find r I/O SHM. (Pseudo filename: %s)\n",SlaveInfo.rank,wid,name);
       Abort(1);
     }
@@ -1047,30 +1058,42 @@ static void* Worker(void *arg)
       Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d inflating at %d.%06d.\n",
              SlaveInfo.rank, wid, st.tv_sec, st.tv_usec);
 
-      if( zinf_memcpy((unsigned char*)file_sizes->fs[q].shm,(compressedb_t*)(workunit->data),(size_t)workunit->len,&dcsz) != Z_OK ) {
-        Vprint(SEV_ERROR,"Slave %d Worker %d zlib inflate failed. Terminating.\n",SlaveInfo.rank,wid);
-        si->worker_error = wid;
-        return NULL;
-      }
-      gettimeofday(&et, NULL);
-      Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
-	     SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
-      t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
-	      (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+      // Map each input in multi-input mode
+      for( f=0, cb=(compressedb_t*)(workunit->data);
+           f<args.nq_files;
+           ++f, cb=((void*)cb)+cb->len+sizeof(cb->len) ) {
 
-      if( dcsz > QUERYBUFF_SIZE ) {
-	Vprint(SEV_ERROR,"Compressed block of size %ld is too large for query buffer maximum of %ld.\n",
-	    dcsz, QUERYBUFF_SIZE);
-	si->worker_error = wid;
-	return NULL;
+        if( zinf_memcpy((unsigned char*)file_sizes->fs[q[f]].shm,cb,&dcsz) != Z_OK ) {
+          Vprint(SEV_ERROR,"Slave %d Worker %d zlib inflate failed. Terminating.\n",SlaveInfo.rank,wid);
+          si->worker_error = wid;
+          return NULL;
+        }
+	Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d File %d CSZ: %d DSZ: %d.\n",
+	       SlaveInfo.rank, wid, f, cb->len, dcsz);
+
+	file_sizes->fs[q[f]].size = dcsz;
+        idb += dcsz;
       }
-				
-      ib  = workunit->len;
-      idb = dcsz;
-      file_sizes->fs[q].size = dcsz;
+      ib = workunit->len;
+
+      // Reset lengths on outputs
       for( f=0; f<SlaveInfo.nout_files; ++f ) {
 	file_sizes->fs[r[f]].size = 0;
       }
+
+      gettimeofday(&et, NULL);
+      Vprint(SEV_TIMING,"[TIMING] Slave %d, Worker %d beginning search at %d.%06d.\n",
+             SlaveInfo.rank, wid, et.tv_sec, et.tv_usec);
+      t_ic += ((et.tv_sec*1000000+et.tv_usec) - 
+              (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
+
+      if( dcsz > QUERYBUFF_SIZE ) {
+        Vprint(SEV_ERROR,"Compressed block of size %ld is too large for query buffer maximum of %ld.\n",
+            dcsz, QUERYBUFF_SIZE);
+        si->worker_error = wid;
+        return NULL;
+      }
+
       t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, argv, workunit->blk_id, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
@@ -1650,10 +1673,10 @@ static void Slave(int processes, int rank)
 {
   struct timeval  tv;
   slaveinfo_t    *si=&SlaveInfo;
-  compressedb_t  *cb;
+  compressedb_t  *cb, *cbi;
   workunit_t     *workunit;
   request_t      *request;
-  int             qd=0,i,sz,base_id;
+  int             qd=0,i,j,sz,base_id;
 
   gettimeofday(&tv, NULL);
   Vprint(SEV_TIMING,"[TIMING] Slave %d started at %d.%06d.\n",
@@ -1740,19 +1763,29 @@ static void Slave(int processes, int rank)
       tscq_entry_free(si->wq,workunit);
       // Break up the larger work unit into smaller units
       // and send them to worker threads.
-      for(i=0,cb=(compressedb_t*)si->seq_data; cb<(compressedb_t*)(si->seq_data+sz); cb=((void*)cb)+cb->len+sizeof(cb->len),i++) {
-        // Get queue entry, fill it, and dispatch it
+      // ||Q0a|Q0b||Q1a|Q1b||...||QNa|QNb|
+      for(i=0,cb=(compressedb_t*)si->seq_data; cb<(compressedb_t*)(si->seq_data+sz); cb=cbi,i++) {
+        // Get queue entry, fill most of header
         workunit = tscq_entry_new(si->wq);
         workunit->type   = WU_TYPE_SEQF;
-        workunit->len    = cb->len+sizeof(cb->len);
-	workunit->blk_id = base_id + i;
+        workunit->blk_id = base_id + i;
+        workunit->len    = 0;
+
+        // Loop over blocks we need for multi-input-file support. Accumulate length
+        for(j=0,cbi=cb; j<args.nq_files; ++j, cbi=((void*)cbi)+cbi->len+sizeof(cbi->len)) {
+          workunit->len += cbi->len + sizeof(cbi->len);
+        }
+
+        // Fill data
         workunit->data   = safe_malloc(workunit->len);
         if( !workunit->data ) {
           Vprint(SEV_ERROR,"Slave failed to allocate work unit data for worker. Terminating.\n");
           Abort(1);
         }
         memcpy(workunit->data, cb, workunit->len);
+        // Dispatch
         tscq_entry_put(si->wq,workunit);
+
         // Check for pre-caching case
         if( i ) {
           qd++;
@@ -1871,7 +1904,8 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   void           *shm;
   long            shmsz;
   char          **files,name[1024];
-  int             i,j,rv,node,nodes,loadstride,range[1][3],nfiles,nout_files;
+  int             i,j,rv,node,nodes,loadstride,range[1][3];
+  int             nfiles,nout_files;
   MPI_Group       oldgroup,group;
   MPI_Comm        newcomm=MPI_COMM_NULL,comm;
 
@@ -1929,12 +1963,14 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       // Get file size array ready
       file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
-      // Create the two in/out SHMs per core
+      // Create the in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
-        sprintf(name,":STDIN%d",i*2);
-        Create_DBSHM(name,QUERYBUFF_SIZE);
+	for(j=0; j<args.nq_files; j++) {
+	  sprintf(name,":MCW:W%d:IN%d",i,j);
+	  Create_DBSHM(name,QUERYBUFF_SIZE);
+	}
 	for(j=0; j<nout_files; j++) {
-	  sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	  sprintf(name,":MCW:W%d:OUT%d",i,j);
 	  Create_DBSHM(name,RESULTBUFF_SIZE);
 	}
       }
@@ -1996,10 +2032,12 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the two in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
-        sprintf(name,":STDIN%d",i*2);
-        Create_DBSHM(name,QUERYBUFF_SIZE);
+	for(j=0; j<args.nq_files; j++) {
+          sprintf(name,":MCW:W%d:IN%d",i,j);
+          Create_DBSHM(name,QUERYBUFF_SIZE);
+        }
 	for(j=0; j<nout_files; j++) {
-	  sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	  sprintf(name,":MCW:W%d:OUT%d",i,j);
 	  Create_DBSHM(name,RESULTBUFF_SIZE);
 	}
       }
@@ -2050,10 +2088,12 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
     memset(file_sizes,0,sizeof(filesizes_t));
     // Create the two in/out SHMs per core
     for(i=0; i<MCW_NCORES; i++) {
-      sprintf(name,":STDIN%d",i*2);
-      Create_DBSHM(name,QUERYBUFF_SIZE);
+      for(j=0; j<args.nq_files; j++) {
+        sprintf(name,":MCW:W%d:IN%d",i,j);
+        Create_DBSHM(name,QUERYBUFF_SIZE);
+      }
       for(j=0; j<nout_files; j++) {
-	sprintf(name,":STDOUT%d:%d",i*2+1,j);
+	sprintf(name,":MCW:W%d:OUT%d",i,j);
 	Create_DBSHM(name,RESULTBUFF_SIZE);
       }
     }
@@ -2244,6 +2284,13 @@ static void Parse_Environment(int procs)
     UsageError();
   }
   args.queryf = strdup(p);
+  if( (p=getenv("MCW_Q_COUNT")) ) {
+    if( sscanf(p,"%d",&(args.nq_files)) != 1 ) {
+      UsageError();
+    }
+  } else {
+    args.nq_files = 1;
+  }
   if( !(p=getenv("MCW_Q_WUM")) ) {
     UsageError();
   }

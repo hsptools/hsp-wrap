@@ -27,7 +27,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_NRML
+#define VERBOSITY   SEV_WARN
 
 
 // Maximum number of DB files
@@ -46,7 +46,8 @@ typedef struct st_args {
   int   wum;             // Work unit count multiplier
   char *mode;            // Blastall mode (e.g. blastp)
   char *queryf;          // Query file
-  char *out_files;       // Expect output Filenames
+  int   nq_files;        // Number of virtual Q files
+  char *out_files;       // Expected output Filenames
   char *dup2;            // FD mappings for child
   long  time_limit;      // Runtime limit
   char *job_name;        // User-specified name for the run

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -185,13 +186,20 @@ static WFILE* new_WFILE(const char *fn)
   char  *saveptr, *files, *n;
   const char *name=NULL;
   char   buf[512];
-  int    rv, i;
+  int    rv, i, qidx;
 
   // Map filename to proper SHM name
   if( !strncmp(fn,":DB:", 4) ) {
+    // FIXME DEPRECATED: Blast-specific, just make use pass in fullpath+prefix
     sprintf(buf, "%s/%s", getenv("MCW_DB_FULL_PATH"), getenv("MCW_DB_PREFIX"));
-  } else if( !strncmp(fn, ":IN:", 4) ) {
-    sprintf(buf,":STDIN%d",atoi(getenv("MCW_WID"))*2);
+    name = buf;
+  } else if ( !(strncmp(fn, ":IN:", 4)) ) {
+    // Old-school input file
+    sprintf(buf,":MCW:W%d:IN0",atoi(getenv("MCW_WID")));
+    name = buf;
+  } else if( sscanf(fn, ":IN%d:", &qidx) == 1 ) {
+    // Input files..
+    sprintf(buf,":MCW:W%d:IN%d",atoi(getenv("MCW_WID")), qidx);
     name = buf;
   } else {
     // Looking for filename in mapped outputs
@@ -203,7 +211,7 @@ static WFILE* new_WFILE(const char *fn)
 
       // Match (fn is output file)
       if( !strcmp(n, fn) ) {
-	sprintf(buf,":STDOUT%d:%d",atoi(getenv("MCW_WID"))*2+1, i);
+	sprintf(buf,":MCW:W%d:OUT%d",atoi(getenv("MCW_WID")), i);
 	name = buf;
 	break;
       }
@@ -213,6 +221,7 @@ static WFILE* new_WFILE(const char *fn)
 
   // Config files, etc. ?
   if (!name) {
+    printf("stdiowrap: Unknown file: %s\n", fn);
     name = fn;
   }
 	
