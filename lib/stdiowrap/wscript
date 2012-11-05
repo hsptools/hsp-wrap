@@ -18,9 +18,9 @@ def build(bld):
 
     ## user libraries
     bld.stlib(target='stdiowrap', source=c_src, includes='.',
-              defines='BACKEND_SHM')
+              export_includes='.', defines='BACKEND_SHM')
 
     bld.new_task_gen(target='stdiowrap++', source=cpp_src, includes='.',
                      use='stdiowrap', features='cxx cxxstlib',
-                     defines='BACKEND_SHM')
+                     export_includes='.', defines='BACKEND_SHM')
 
