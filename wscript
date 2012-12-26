@@ -45,17 +45,23 @@ def configure(conf):
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)
 
+    # Additional environment for modernish xopen/gnu features
+    xopen500env = conf.env.derive()
+    xopen500env.DEFINES += ['_XOPEN_SOURCE=500']
+
+    #### Check for Libraries ####
+
     # zlib
     try:
         conf.check_cfg(package='zlib', atleast_version='1.2.3',
-                args=['--cflags', '--libs'])
+                args='--cflags --libs', uselib_store='ZLIB')
     except:
         conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
                 uselib_store='ZLIB',
                 msg="Checking for any 'zlib'")
 
     # std Math
-    conf.check_cc(lib='m', uselib_store='M',
+    conf.check_cc(lib='m', uselib_store='M', mandatory=True,
             msg="Checking for 'libm' (math library)")
 
     # libexpat1
@@ -71,14 +77,22 @@ def configure(conf):
 
         conf.env['VERSION_MYSQL'] = conf.cmd_and_log([mysql_config,'--version'])
 
+    # libYAML
+    conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
+            args='--cflags --libs', uselib_store='YAML',
+            mandatory=True)
+
+    #### Check for Functions ####
+
+    # getline
+    conf.check_cc(header_name='stdio.h', function_name='getline',
+            uselib_store='GETLINE')
+
     # nftw from ftw.h (File Tree Walk)
-    conf.env.stash()
-    try:
-        conf.env.DEFINES += ['_XOPEN_SOURCE=500']
-        conf.check_cc(header_name='ftw.h', function_name='nftw',
-                uselib_store='FTW')
-    finally:
-        conf.env.revert()
+    conf.check_cc(header_name='ftw.h', function_name='nftw',
+            uselib_store='NFTW', env=xopen500env)
+
+    #### Additional Configuration ####
 
     # Defines
     conf.define_cond('DEBUG',          conf.options.debug)
