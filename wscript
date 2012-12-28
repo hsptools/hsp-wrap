@@ -51,15 +51,6 @@ def configure(conf):
 
     #### Check for Libraries ####
 
-    # zlib
-    try:
-        conf.check_cfg(package='zlib', atleast_version='1.2.3',
-                args='--cflags --libs', uselib_store='ZLIB')
-    except:
-        conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
-                uselib_store='ZLIB',
-                msg="Checking for any 'zlib'")
-
     # std Math
     conf.check_cc(lib='m', uselib_store='M', mandatory=True,
             msg="Checking for 'libm' (math library)")
@@ -70,17 +61,31 @@ def configure(conf):
         msg="Checking for 'Expat'")
     conf.env['HAVE_LIBEXPAT'] = foo
 
+    # glib
+    conf.check_cfg(package='glib-2.0', atleast_version='2.30.3',
+            args='--cflags --libs', uselib_store='GLIB2',
+            mandatory=True)
+
+    # libYAML
+    conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
+            args='--cflags --libs', uselib_store='YAML',
+            mandatory=True)
+
+    # zlib
+    try:
+        conf.check_cfg(package='zlib', atleast_version='1.2.3',
+                args='--cflags --libs', uselib_store='ZLIB')
+    except:
+        conf.check_cc(lib='z', header_name='zlib.h', function_name='inflate',
+                uselib_store='ZLIB',
+                msg="Checking for any 'zlib'")
+
     # MySQL
     if mysql_config:
         conf.check_cfg(path=mysql_config, args='--include --libs',
                 package='', uselib_store='MYSQL', msg="Checking for 'MySQL'")
 
         conf.env['VERSION_MYSQL'] = conf.cmd_and_log([mysql_config,'--version'])
-
-    # libYAML
-    conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
-            args='--cflags --libs', uselib_store='YAML',
-            mandatory=True)
 
     #### Check for Functions ####
 
@@ -108,5 +113,5 @@ def configure(conf):
 	Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('lib mcw tools')
+    bld.recurse('hspwrap lib mcw tools')
 

@@ -1340,7 +1340,9 @@ void* ResultWriter(void *arg)
     }
 
     // Setup/Open output file 
-    if( !(f[i]=open(SlaveInfo.out_files[i], O_CREAT|O_EXCL|O_WRONLY)) ) {
+    if( !(f[i]=open(SlaveInfo.out_files[i], 
+                    O_CREAT | O_EXCL | O_WRONLY,
+                    S_IRUSR | S_IWUSR )) ) {
       Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file.  Terminating.\n",
 	     SlaveInfo.rank);
       result_thread_error = 1;

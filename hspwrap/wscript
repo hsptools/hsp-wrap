@@ -1,0 +1,18 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+from waflib import Logs
+
+def build(bld):
+    mpienv = bld.all_envs['mpicc']
+
+    src = '''
+        src/hspwrap.c
+    '''
+
+    bld.program(source=src, target='hspwrap',
+                use='GLIB2 YAML')
+
+    #bld.program(target='hspwrap', source=src, 'src',
+    #            use='M', env=mpienv)
