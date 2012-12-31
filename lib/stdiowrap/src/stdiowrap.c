@@ -32,6 +32,10 @@
 #  include <sys/types.h>
 #  include <sys/time.h>
 #  define MAX_DB_FILES   (256)
+#  define MAX_FILE_PATH  256
+#  define MAX_PROCESSES  8
+#  define PS_CTL_FD_ENVVAR "HSPWRAP_CTL_SHM_FD"
+#  define WORKER_ID_ENVVAR "HSPWRAP_WID"
 #endif
 
 
@@ -43,7 +47,7 @@
 
 // SHM list SHM
 #ifdef BACKEND_SHM
-static filesizes_t *file_sizes = NULL;
+static process_control_t *ps_ctl = NULL;
 #endif
 
 
@@ -109,29 +113,30 @@ static void free_WFILE_data_MMAP(WFILE *wf)
 
 
 #ifdef BACKEND_SHM
-static void init_SHM()
+static void
+init_SHM ()
 {
   char *ev;
   int   fd;
 
-  if( !file_sizes ) {
+  if (!ps_ctl) {
     // The file descriptors for the SHMs will already be available to
     // the current process, as it is the child of the process that
     // created the SHMs.  We only need to open the SHM.  Note that
     // our parent already marked the SHMs for removal, so they will
     // cleaned up for us later.
-    if( !(ev=getenv("MCW_FI_SHM_FD")) ) {
-      fprintf(stderr,"stdiowrap: Failed to read MCW_FI_SHM_FD env var.\n");
+    if (!(ev = getenv(PS_CTL_FD_ENVVAR))) {
+      fprintf(stderr, "stdiowrap: Failed to read " PS_CTL_FD_ENVVAR " env var.\n");
       exit(1);
     }
-    if( sscanf(ev,"%d",&fd) != 1 ) {
-      fprintf(stderr,"stdiowrap: Failed to parse MCW_FI_SHM_FD env var.\n");
+    if (sscanf(ev, "%d", &fd) != 1) {
+      fprintf(stderr, "stdiowrap: Failed to parse " PS_CTL_FD_ENVVAR " env var.\n");
       exit(1);
     }
     // Attach the SHM
-    file_sizes = shmat(fd, NULL, 0);
-    if( file_sizes == ((void*)-1) ) {
-      fprintf(stderr,"stdiowrap: Failed to attach index SHM.\n");
+    ps_ctl = shmat(fd, NULL, 0);
+    if (ps_ctl == ((void *) -1)) {
+      fprintf(stderr, "stdiowrap: Failed to attach index SHM.\n");
       exit(1);
     }
   }
@@ -139,26 +144,32 @@ static void init_SHM()
 }
 
 
-static int fill_WFILE_data_SHM(WFILE *wf)
+static int
+fill_WFILE_data_SHM (WFILE *wf)
 {
   int i;
-
+  int wid = atoi(getenv(WORKER_ID_ENVVAR));
 
   // Attach list SHM if needed
   init_SHM();
 
   // Only fill for files that are listed
-  for(i=0; i < file_sizes->nfiles; i++) {
-    if( !strcmp(file_sizes->fs[i].name,wf->name) ) {
+  fprintf(stderr, "nfiles = %d\n", ps_ctl->ft.nfiles);
+  for (i=0; i < ps_ctl->ft.nfiles; i++) {
+    file_table_entry_t *f = ps_ctl->ft.file + i;
+    // FIXME SEGFAULT?!?!? FIXME
+    if (!strcmp(f->name, wf->name) && f->wid == wid) {
+      fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
       // Attach the shared memory segment
-      wf->data = shmat(file_sizes->fs[i].fd, NULL, 0);
-      if( wf->data == ((void*)-1) ) {
-        fprintf(stderr,"stdiowrap: Failed to attach SHM.\n");
+      wf->data = shmat(f->shm_fd, NULL, 0);
+      if (wf->data == ((void *) -1)) {
+        fprintf(stderr, "stdiowrap: Failed to attach SHM.\n");
+	fflush(stderr);
 	      exit(1);
       }
-      wf->size  = file_sizes->fs[i].size;
-      wf->tsize = file_sizes->fs[i].shmsize;
-      wf->psize = &(file_sizes->fs[i].size);
+      wf->size  = f->size;
+      wf->tsize = f->shm_size;
+      wf->psize = &(f->size);
       // We are done; return
       return 0;
     }
@@ -185,23 +196,28 @@ static WFILE* new_WFILE(const char *fn)
   WFILE *wf;
   char  *saveptr, *files, *n;
   const char *name=NULL;
-  char   buf[512];
   int    rv, i, qidx;
 
+  /*
+  char   buf[512];
   // Map filename to proper SHM name
   if( !strncmp(fn,":DB:", 4) ) {
+    fprintf(stderr,"new 2\n");
     // FIXME DEPRECATED: Blast-specific, just make use pass in fullpath+prefix
     sprintf(buf, "%s/%s", getenv("MCW_DB_FULL_PATH"), getenv("MCW_DB_PREFIX"));
     name = buf;
   } else if ( !(strncmp(fn, ":IN:", 4)) ) {
+    fprintf(stderr,"new 3\n");
     // Old-school input file
-    sprintf(buf,":MCW:W%d:IN0",atoi(getenv("MCW_WID")));
+    sprintf(buf,":MCW:W%d:IN0",atoi(getenv(WORKER_ID_ENVVAR)));
     name = buf;
   } else if( sscanf(fn, ":IN%d:", &qidx) == 1 ) {
+    fprintf(stderr,"new 4\n");
     // Input files..
-    sprintf(buf,":MCW:W%d:IN%d",atoi(getenv("MCW_WID")), qidx);
+    sprintf(buf,":MCW:W%d:IN%d",atoi(getenv(WORKER_ID_ENVVAR)), qidx);
     name = buf;
   } else {
+    fprintf(stderr,"new 5\n");
     // Looking for filename in mapped outputs
     // TODO: Cache list
     files = strdup(getenv("MCW_O_FILES"));
@@ -211,19 +227,23 @@ static WFILE* new_WFILE(const char *fn)
 
       // Match (fn is output file)
       if( !strcmp(n, fn) ) {
-	sprintf(buf,":MCW:W%d:OUT%d",atoi(getenv("MCW_WID")), i);
+	sprintf(buf,":MCW:W%d:OUT%d",atoi(getenv(WORKER_ID_ENVVAR)), i);
 	name = buf;
 	break;
       }
     }
     free(files);
   }
+  */
+  name = fn;
 
   // Config files, etc. ?
-  if (!name) {
+  /*if (!name) {
+    fprintf(stderr,"new 7\n");
     printf("stdiowrap: Unknown file: %s\n", fn);
     name = fn;
   }
+  */
 	
   // Malloc a new WFILE
   if( !(wf=malloc(sizeof(WFILE))) ) {
@@ -641,6 +661,8 @@ extern int stdiowrap_fputs(const char *s, FILE *stream)
   // Update sizes
   wf->size += (p-s);
   *(wf->psize) = wf->size;
+
+  fprintf(stderr, "POS: %d SIZE %d\n", wf->pos, wf->size);
 
   // Great success
   return 1;

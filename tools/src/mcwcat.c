@@ -17,6 +17,7 @@ main(int argc, char **argv)
     fprintf(stderr, "argv[%d] = %s\n", i, argv[i]);
   }
   outf = stdiowrap_fopen(argv[1], "w");
+  fprintf(stderr, "outf = %p\n", outf);
 
   stdiowrap_fputs("======================\n", outf);
   for (i = 1; i < argc; ++i) {
@@ -25,6 +26,7 @@ main(int argc, char **argv)
   stdiowrap_fputs("======================\n", outf);
   for (i = 2; i < argc; ++i) {
     inf = stdiowrap_fopen(argv[i], "r");
+    fprintf(stderr, "inf = %p\n", inf);
     for (j=0; (c = stdiowrap_fgetc(inf)) != EOF; ++j)
       stdiowrap_fputc(c, outf);
     stdiowrap_fclose(inf);
@@ -33,7 +35,7 @@ main(int argc, char **argv)
   }
   stdiowrap_fputs("======================\n", outf);
 
-  sleep(10);
+  //sleep(10);
   stdiowrap_fclose(outf);
 
   return EXIT_SUCCESS;
