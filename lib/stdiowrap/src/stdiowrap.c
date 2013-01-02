@@ -220,8 +220,9 @@ static WFILE* new_WFILE(const char *fn)
   }
 
   // Config files, etc. ?
+  // FIXME: Don't trigger on DB matches
   if (!name) {
-    printf("stdiowrap: Unknown file: %s\n", fn);
+    //printf("stdiowrap: Unknown file: %s\n", fn);
     name = fn;
   }
 	
