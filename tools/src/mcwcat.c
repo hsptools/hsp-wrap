@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "stdiowrap/stdiowrap.h"
@@ -36,6 +37,8 @@ main(int argc, char **argv)
     fprintf(stderr, "File %d. Wrote %d bytes\n", i, j);
   }
   stdiowrap_fputs("======================\n", outf);
+
+  kill(getpid(), SIGKILL);
 
   //sleep(10);
   stdiowrap_fclose(outf);

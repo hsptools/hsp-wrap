@@ -1,0 +1,9 @@
+#!/usr/bin/env python
+
+def build(bld):
+    src = '''
+    '''
+
+    ## user libraries
+    bld.stlib(target='hsp', source=src, includes='.',
+              export_includes='.', use='PTHREAD')

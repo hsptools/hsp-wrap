@@ -1,8 +1,4 @@
 #!/usr/bin/env python
-import os
-import shutil
-import re
-from waflib import Logs
 
 def build(bld):
     c_src = '''
@@ -19,7 +15,7 @@ def build(bld):
     ## user libraries
     bld.stlib(target='stdiowrap', source=c_src, includes='.',
               export_includes='.', defines='BACKEND_SHM',
-	      use='PTHREAD')
+	      use='hsp PTHREAD')
 
     bld.new_task_gen(target='stdiowrap++', source=cpp_src, includes='.',
                      use='stdiowrap', features='cxx cxxstlib',

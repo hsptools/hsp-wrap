@@ -2,5 +2,5 @@
 
 def build(bld):
     #bld.recurse('cliutils ioutils strutils zutils stdiowrap')
-    bld.recurse('stdiowrap')
+    bld.recurse('hsp stdiowrap')
 

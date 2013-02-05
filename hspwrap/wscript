@@ -8,12 +8,9 @@ def build(bld):
     mpienv = bld.all_envs['mpicc']
 
     bld.program(source='src/hspwrap.c', target='hspwrap',
-                use='YAML PTHREAD')
+                use='hsp YAML PTHREAD')
 
     bld.program(source='src/hspwrap-ev.c', target='hspwrap-ev',
-                use='YAML ev PTHREAD M')
-
-    #bld.program(target='hspwrap', source=src, 'src',
-    #            use='M', env=mpienv)
+                use='hsp YAML ev PTHREAD M')
 
     bld.recurse('libev-4.15')
