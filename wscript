@@ -97,5 +97,5 @@ def configure(conf):
 	Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('lib mcw tools')
+    bld.recurse('lib mcw tools tests')
 
