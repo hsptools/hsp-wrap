@@ -27,8 +27,8 @@ main(int argc, char **argv)
   for (i = 2; i < argc; ++i) {
     inf = stdiowrap_fopen(argv[i], "r");
     fprintf(stderr, "inf = %p\n", inf);
-    for (j=0; (c = stdiowrap_fgetc(inf)) != EOF; ++j) {
-      fprintf(stderr,".\n");
+    for (j=0; (c = stdiowrap_fgetc(inf)) != EOF && j < 20; ++j) {
+      fprintf(stderr,".%c (%x)\n", c, c);
       stdiowrap_fputc(c, outf);
     }
     stdiowrap_fclose(inf);
@@ -40,5 +40,6 @@ main(int argc, char **argv)
   //sleep(10);
   stdiowrap_fclose(outf);
 
+  fprintf(stderr, "Done.\n");
   return EXIT_SUCCESS;
 }

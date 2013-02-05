@@ -37,9 +37,12 @@ enum HspError {
   HSP_ERROR_FAILED
 };
 
+//// COMMON STUFF
+
 typedef uint16_t wid_t;
 #define PRI_WID PRIu16
 #define SCN_WID SCNu16
+#define BAD_WID 0xFFFF
 
 /**
  * File description for a virtual file
@@ -69,6 +72,7 @@ struct file_table {
  * Different states a process may be in (set by process)
  */
 enum process_state {
+  IDLE,      // Nothing actually running
   RUNNING,   // Process in standard running mode
   EOD,       // End of data, give me more data if you have it 
   NOSPACE,   // An output buffer is full and needs to be flushed/swapped 
@@ -97,7 +101,7 @@ struct process_control {
   sem_t process_ready[MAX_PROCESSES];
   enum process_state process_state[MAX_PROCESSES];
   enum process_cmd   process_cmd[MAX_PROCESSES];
-  
+
   sem_t sem_service;
 
   //sem_t sem_empty;                 // Signal exhausted data to parent process (work request)
@@ -108,13 +112,81 @@ struct process_control {
   struct file_table ft;            // File descriptors
 };
 
+//// INTERNAL
+
+struct worker_process {
+  wid_t wid;
+  pid_t pid;
+  int   status;
+  sig_atomic_t status_changed;
+};
+
+
+void sigchld_handler (int signo);
 
 void print_tod ();
+
+wid_t worker_for_pid (pid_t pid);
 int create_shm (void *shm, int *fd, size_t size);
+void fetch_work (wid_t wid, char *data);
+int fork_worker (wid_t wid);
+int wait_service ();
 
 
 struct process_control *ps_ctl;
 int ps_ctl_fd;
+
+struct worker_process worker_ps[MAX_PROCESSES];
+
+/**
+ * Wrapper-wide signal handler
+ */
+void
+sigchld_handler (int signo)
+{
+  int orig_errno = errno;
+  register pid_t pid;
+  int w;
+  wid_t wid;
+
+  while (1) {
+    // Deal with interruptions and the pid not being available yet
+    do {
+      errno = 0;
+      pid = waitpid (WAIT_ANY, &w, WNOHANG | WUNTRACED);
+    } while (pid <= 0 && errno == EINTR);
+
+    if (pid <= 0) {
+      // No more stopped or terminated children left
+      errno = orig_errno;
+      return;
+    }
+
+    wid = worker_for_pid(pid);
+    if (wid != BAD_WID) {
+      worker_ps[wid].status = w;
+      worker_ps[wid].status_changed = 1;
+      sem_post(&ps_ctl->sem_service);
+    }
+  }
+}
+
+
+/**
+ *  Lookup process by worker-id
+ */
+wid_t
+worker_for_pid (pid_t pid)
+{
+  int i;
+
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    if (worker_ps[i].pid == pid) {
+      return worker_ps[i].wid;
+    }
+  }
+  return BAD_WID;
+}
 
 
 /**
@@ -150,7 +222,7 @@ create_shm (void *shm, int *fd, size_t size)
 
   // Mark for removal
   shmctl(shm_fd, IPC_RMID, NULL);
-  
+
   // Return the created SHM
   if (fd) {
     *fd = shm_fd;
@@ -170,19 +242,20 @@ print_tod ()
 
 
 void
-fetch_work (wid_t wid)
+fetch_work (wid_t wid, char *data)
 {
   int i;
   struct file_table *ft;
   struct file_table_entry *f;
+  size_t cnt = strlen(data);
 
   ft = &ps_ctl->ft;
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
     if (f->wid == wid && !strcmp(f->name, "inputfile")) {
       // Prepare data buffer(s)
-      memcpy(f->shm, "Hello World!\n", 13);
-      f->size = 13;
+      memcpy(f->shm, data, cnt);
+      f->size = cnt;
     }
   }
 }
@@ -210,6 +283,8 @@ fork_worker (wid_t wid)
     }
   }
   else if (pid > 0) {
+    worker_ps[wid].pid = pid;
+    //worker_process[wid].status = 0;
     // Parent
     print_tod();
     return 0;
@@ -233,6 +308,9 @@ main (int argc, char **argv)
   int forked = 0;
   int i, j, wid;
 
+  // Register signal and signal handler
+  signal(SIGCHLD, sigchld_handler);
+
   // Create main "process control" structure
   if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(struct process_control))) {
     //err = nih_error_get();
@@ -250,6 +328,9 @@ main (int argc, char **argv)
     sem_init(&ps_ctl->process_ready[i], 1, 0);
     ps_ctl->process_state[i] = DONE;
     ps_ctl->process_cmd[i] = QUIT;
+    worker_ps->wid = i;
+    worker_ps->pid = 0;
+    worker_ps->status = 0;
   }
 
   // Empty file table
@@ -302,7 +383,7 @@ main (int argc, char **argv)
   // Initial distribution
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
     // Fetch work into buffers for worker wid (set FTE size and shm data)
-    fetch_work(wid);
+    fetch_work(wid, "Hello World!\n");
 
     // Prepare process block
     ps_ctl->process_state[wid] = RUNNING;
@@ -317,21 +398,100 @@ main (int argc, char **argv)
     }
   }
 
-  while (forked) {
+  //while (forked) {
     // Wait for a process to need service
     fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
     wait_service();
-    fprintf(stderr, "GOT SERVICE REQUEST!\n");
-    forked--;
-  }
+    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+      fprintf(stderr, "GOT SERVICE REQUEST!\n");
 
-  // Find worker requiring service
+      sem_wait(&ps_ctl->process_lock[wid]);
+      fprintf(stderr, "PS STATE = %d, status = %d\n", ps_ctl->process_state[wid], worker_ps[wid].status);
 
-  // Feed it more work
-  
-  // Set process to RUN
+      // Set any state from ended processes
+      if (worker_ps[wid].status_changed) {
+        if (WIFSIGNALED(worker_ps[wid].status)) {
+          ps_ctl->process_state[wid] = FAILED;
+        } else if (WIFEXITED(worker_ps[wid].status)) {
+          ps_ctl->process_state[wid] = DONE;
+        }
+        worker_ps[wid].status_changed = 0;
+      }
 
-  // post to ps_ctl->process_ready[wid]
+      switch (ps_ctl->process_state[wid]) {
+      case EOD:
+        fprintf(stderr, "FETCHING MORE DATA\n");
+	fetch_work(wid, "That's all folks!\n");
+	// TODO: Move process_* changes to fetch_work(); ?
+	ps_ctl->process_cmd[wid] = RUN;
+	sem_post(&ps_ctl->process_ready[wid]);
+        break;
+      case NOSPACE:
+        fprintf(stderr, "PROCESS NO SPACE\n");
+      case FAILED:
+        fprintf(stderr, "PROCESS FAILED\n");
+        ps_ctl->process_state[wid] = IDLE;
+        worker_ps[wid].pid = 0;
+        worker_ps[wid].status = 0;
+        break;
+      case DONE:
+        fprintf(stderr, "PROCESS QUIT\n");
+        ps_ctl->process_state[wid] = IDLE;
+        worker_ps[wid].pid = 0;
+        worker_ps[wid].status = 0;
+        break;
+      case IDLE:
+      case RUNNING:
+        // Not a process of interest, move on.
+        break;
+      }
+      sem_post(&ps_ctl->process_lock[wid]);
+    }
+
+    fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
+    wait_service();
+    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+      fprintf(stderr, "GOT SERVICE REQUEST!\n");
+
+      sem_wait(&ps_ctl->process_lock[wid]);
+      fprintf(stderr, "PS STATE = %d, status = %d\n", ps_ctl->process_state[wid], worker_ps[wid].status);
+
+      // Set any state from ended processes
+      if (worker_ps[wid].status_changed) {
+        if (WIFSIGNALED(worker_ps[wid].status)) {
+          ps_ctl->process_state[wid] = FAILED;
+        } else if (WIFEXITED(worker_ps[wid].status)) {
+          ps_ctl->process_state[wid] = DONE;
+        }
+        worker_ps[wid].status_changed = 0;
+      }
+
+      switch (ps_ctl->process_state[wid]) {
+      case EOD:
+	ps_ctl->process_cmd[wid] = QUIT;
+	sem_post(&ps_ctl->process_ready[wid]);
+        break;
+      case NOSPACE:
+        fprintf(stderr, "PROCESS NO SPACE\n");
+      case FAILED:
+        fprintf(stderr, "PROCESS FAILED\n");
+        ps_ctl->process_state[wid] = IDLE;
+        worker_ps[wid].pid = 0;
+        worker_ps[wid].status = 0;
+        break;
+      case DONE:
+        fprintf(stderr, "PROCESS QUIT\n");
+        ps_ctl->process_state[wid] = IDLE;
+        worker_ps[wid].pid = 0;
+        worker_ps[wid].status = 0;
+        break;
+      case IDLE:
+      case RUNNING:
+        // Not a process of interest, move on.
+        break;
+      }
+      sem_post(&ps_ctl->process_lock[wid]);
+    }
 
 
 

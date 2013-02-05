@@ -74,6 +74,7 @@ struct file_table {
  * Different states a process may be in (set by process)
  */
 enum process_state {
+  IDLE,      // Nothing actually running
   RUNNING,   // Process in standard running mode
   EOD,       // End of data, give me more data if you have it 
   NOSPACE,   // An output buffer is full and needs to be flushed/swapped 

@@ -340,7 +340,10 @@ wait_eod (struct WFILE *wf)
 
   switch (get_command()) {
   case RUN:
-    // TODO: PG!! Adjust WFILE offset and pos as appropriate
+    // More data, update WFILE and continue
+    wf->offset += wf->size;
+    wf->size    = *wf->psize;
+    wf->pos     = wf->data;
     return 1;
 
   case QUIT:
@@ -356,6 +359,11 @@ wait_eod (struct WFILE *wf)
     exit(1);
     break;
   }
+
+  // Change status back to running (FIXME: Should be DONE if QUIT?)
+  lock();
+  set_status(RUNNING);
+  unlock();
 }
 
 
@@ -410,33 +418,40 @@ stdiowrap_fread (void *ptr, size_t size, size_t nmemb, FILE *stream)
 
   unsigned char *ubound = wf->data + wf->size;	// upper bound
   size_t         avail  = ubound - wf->pos;	// bytes available
+  size_t         remain = size * nmemb;
+  size_t         read   = 0;
 
-  // TODO: While() loop
-  if (size * nmemb > avail) {
+  while (remain > avail) {
     // Wants too much, copy everything we have
     memcpy(ptr, wf->pos, avail);
+    ptr    += avail;
+    read   += avail;
+    remain -= avail;
 
     // Wait for data
     if (wait_eod(wf)) {
-      // More data, update WFILE and continue
-      wf->offset += wf->size;
-      wf->size    = *wf->psize;
-      wf->pos     = wf->data;
-      // Copy items
-      memcpy(ptr, wf->pos, (size * nmemb) - avail);
+      // Update locals
+      ubound = wf->data + wf->size;
+      avail  = ubound - wf->pos;
     } else {
-      // No more data, trim nmemb
-      nmemb = avail / size;
-      // Copy items
-      memcpy(ptr, wf->pos, size * nmemb);
+      // Update locals
+      ubound = wf->data;
+      avail = 0;
+      break;
     }
-  } else {
-    // We can provide everything requested without invoking controller
-    memcpy(ptr, wf->pos, size * nmemb);
   }
 
-  // Advance cursor
-  wf->pos += nmemb * size;
+  // Copy last bit of data
+  if (avail > remain) {
+    memcpy(ptr, wf->pos, remain);
+    // Update locals
+    read  += remain;
+    remain = 0;
+  }
+
+  // Figure out how many members we really got, adjust cursor accordingly
+  nmemb = read / size;
+  wf->pos += (size * nmemb) - read;
 
   // Return item count
   return nmemb;
@@ -447,6 +462,7 @@ extern char *
 stdiowrap_fgets (char *s, int size, FILE *stream)
 {
   MAP_WF_E(wf, stream, NULL);
+  char ch;
   char *p = s;
 
   // Quick sanity check on size
@@ -455,9 +471,18 @@ stdiowrap_fgets (char *s, int size, FILE *stream)
   }
   
   // Copy from wf until newline, EOF, or size limit
-  while (--size
-         && wf->pos < (wf->data + wf->size)
-         && (*(p++) = ((char)(*(wf->pos++)))) != '\n') ;
+  while (--size) {
+    if (wf->pos < (wf->data + wf->size)) {
+      if (!wait_eod(wf)) {
+	break;
+      }
+    }
+    ch = (char)(*(wf->pos++));
+    *(p++) = ch; 
+    if (ch == '\n') {
+      break;
+    }
+  }
 
   // Check for EOF without reading case
   if (p == s) {
@@ -478,12 +503,7 @@ stdiowrap_fgetc (FILE *stream)
 
   // Make sure there is a character to be read
   if (wf->pos >= ubound) {
-    if (wait_eod(wf)) {
-      // More data, update WFILE and continue
-      wf->offset += wf->size;
-      wf->size    = *wf->psize;
-      wf->pos     = wf->data;
-    } else {
+    if (!wait_eod(wf)) {
       // no more data
       return EOF;
     }
