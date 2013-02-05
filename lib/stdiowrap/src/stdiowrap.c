@@ -472,7 +472,8 @@ stdiowrap_fgets (char *s, int size, FILE *stream)
   
   // Copy from wf until newline, EOF, or size limit
   while (--size) {
-    if (wf->pos < (wf->data + wf->size)) {
+    // End of buffer, fetch more
+    if (wf->pos == (wf->data + wf->size)) {
       if (!wait_eod(wf)) {
 	break;
       }

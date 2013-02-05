@@ -177,5 +177,5 @@ def configure(conf):
         Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('hspwrap lib tools')
+    bld.recurse('hspwrap lib tools tests')
 

@@ -50,7 +50,7 @@ void print_tod ();
 wid_t worker_for_pid (pid_t pid);
 int create_shm (void *shm, int *fd, size_t size);
 void fetch_work (wid_t wid, char *data);
-int fork_worker (wid_t wid);
+int fork_worker (wid_t wid, char *exe);
 int wait_service ();
 
 
@@ -183,7 +183,7 @@ fetch_work (wid_t wid, char *data)
 
 
 int
-fork_worker (wid_t wid)
+fork_worker (wid_t wid, char *exe)
 {
   char env[2][40];
   char *env_list[3] = {env[0], env[1], NULL};
@@ -196,7 +196,7 @@ fork_worker (wid_t wid)
     snprintf(env[0], ARRAY_SIZE(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
-    if (execle("./mcwcat", "mcwcat", "outputfile", "inputfile", NULL, env_list)) {
+    if (execle(exe, "test", "outputfile", "inputfile", NULL, env_list)) {
       fputs("Could not exec: ",stderr);
       fputs(strerror(errno),stderr);
       fputc('\n',stderr);
@@ -228,6 +228,12 @@ main (int argc, char **argv)
 
   int forked = 0;
   int i, j, wid;
+
+  if (argc != 2) {
+    fputs("Invalid number of arguments\n", stderr);
+    fputs("usage: hspwrap EXEFILE\n", stderr);
+    exit(EXIT_FAILURE);
+  }
 
   // Register signal and signal handler
   signal(SIGCHLD, sigchld_handler);
@@ -311,7 +317,7 @@ main (int argc, char **argv)
     ps_ctl->process_cmd[wid]   = RUN;
 
     // Fork process, set env-vars, execute binary
-    if (fork_worker(wid)) {
+    if (fork_worker(wid, argv[1])) {
       fprintf(stderr, "Failed to fork worker %" PRI_WID "\n", wid);
     } else {
       printf("Worker %" PRI_WID " started.\n", wid);
