@@ -221,7 +221,7 @@ static WFILE* new_WFILE(const char *fn)
 
   // Config files, etc. ?
   if (!name) {
-    printf("stdiowrap: Unknown file: %s\n", fn);
+    //printf("stdiowrap: Unknown file: %s\n", fn);
     name = fn;
   }
 	
