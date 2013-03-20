@@ -32,7 +32,7 @@ char *output_opt  = 0;
 // Other filename
 char *other_opt  = 0;
 // Force overwrite
-int force_flag    = 1;
+int force_flag    = 0;
 
 // Name of program (samplefasta)
 static char *program_name;
@@ -49,6 +49,7 @@ Sequences are sampled with uniform distribution across the input file.\n\
 There is also support to restrict the length of samples which are sequenced.\n\
 Any sequences which exceed this limit are not considered while sampling.\n\n\
 Options:\n\
+  -f, --force             forcibly overwrite output file if it already exists\n\
   -s, --samples=SAMPLES   the number of samples to select\n\
   -m, --min-length=AAS    the minimum sequence length to accept\n\
   -M, --max-length=AAS    the maximum sequence length to accept\n\
@@ -115,6 +116,7 @@ main (int argc, char **argv)
       {"max-length",    required_argument, 0, 'M'},
       {"output",        required_argument, 0, 'o'},
       {"other-output",  required_argument, 0, 'O'},
+      {"force",         no_argument,       0, 'f'},
       {"help",          no_argument,       0, '#'},
       {"version",       no_argument,       0, '^'},
       {0, 0, 0, 0}
@@ -122,7 +124,7 @@ main (int argc, char **argv)
 
     int option_index = 0;
 
-    c = getopt_long(argc, argv, "s:m:M:o:O:",
+    c = getopt_long(argc, argv, "s:m:M:o:O:f",
 	long_options, &option_index);
 
     // Detect the end of the options.
@@ -149,6 +151,10 @@ main (int argc, char **argv)
 
       case 'O':
 	other_opt = optarg;
+	break;
+
+      case 'f':
+	force_flag = 1;
 	break;
 
       case '?':
