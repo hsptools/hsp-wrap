@@ -45,7 +45,7 @@ struct worker_process {
 
 void sigchld_handler (int signo);
 
-void print_tod ();
+void print_tod (FILE *f);
 
 wid_t worker_for_pid (pid_t pid);
 int create_shm (void *shm, int *fd, size_t size);
@@ -154,11 +154,11 @@ create_shm (void *shm, int *fd, size_t size)
 
 
 void
-print_tod ()
+print_tod (FILE *f)
 {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  printf("[%ld.%06ld] ", tv.tv_sec, tv.tv_usec);
+  fprintf(f, "[%ld.%06ld] ", tv.tv_sec, tv.tv_usec);
 }
 
 
@@ -207,7 +207,7 @@ fork_worker (wid_t wid, char *exe)
     worker_ps[wid].pid = pid;
     //worker_process[wid].status = 0;
     // Parent
-    print_tod();
+    print_tod(stderr);
     return 0;
   }
   return -1;
@@ -420,59 +420,6 @@ main (int argc, char **argv)
       sem_post(&ps_ctl->process_lock[wid]);
     }
 
-
-
-#if 0
-  // NON-STREAMING MODE
-
-  char *env[3] = {NULL, NULL, NULL};
-  // Issue all jobs
-  for (j=0; j<NUM_JOBS; ++j) {
-    int wid = j;
-    printf("ISSUING %d\n", j);
-
-    // Prepare data buffer(s)
-    memcpy(ps_ctl->ft.file[j].shm, "Hello World!\n", 13);
-    ps_ctl->ft.file[j].size = 13;
-
-    // Start child
-    pid_t pid = fork();
-    if (pid == 0) {
-      asprintf(&(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
-      asprintf(&(env[1]), WORKER_ID_ENVVAR "=%d\n", wid);
-      if (execle(argv[1], "mcwcat", "outputfile", "inputfile", NULL, env)) {
-        fputs("Could not exec: ",stderr);
-        fputs(strerror(errno),stderr);
-        fputc('\n',stderr);
-        exit(EXIT_FAILURE);
-      }
-    }
-    else if (pid > 0) {
-      // Parent
-      print_tod();
-      printf("Child process %d started.\n", pid);
-
-      if (++forked == NUM_PROCS) {
-        // There are already enough pooled. wait for a "slot"
-        wait(&st);
-        print_tod();
-        printf("Proc exited with status %d.\n", st);
-        --forked;
-      }
-    }
-    else {
-      // Error
-      assert(0);
-    }
-  }
-
-  // Done issuing jobs, wait for outstanding procs
-  for(; forked>0; --forked) {
-    wait(&st);
-    print_tod();
-    printf("Proc exited with status %d. (winding down)\n", st);
-  }
-#endif
 
   // Dump output
   for (i=0; i<ps_ctl->ft.nfiles; ++i) {
