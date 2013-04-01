@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -7,14 +8,13 @@
 #include <sys/wait.h>
 
 // SHM
-#include <glib.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 
 #include <semaphore.h>
 
-#include "errno.h"
-#include "error.h"
+#include <errno.h>
+#include <error.h>
 
 #define MAX_PROCESSES  8
 #define NUM_PROCS      8
@@ -70,7 +70,7 @@ typedef struct {
 
 
 void print_tod ();
-int create_shm (void *shm, int *fd, size_t size, GError **err);
+int create_shm (void *shm, int *fd, size_t size);
 
 
 /**
@@ -78,29 +78,29 @@ int create_shm (void *shm, int *fd, size_t size, GError **err);
  * attachments are gone, the segment will be destroyed by the OS.
  */
 int
-create_shm (void *shm, int *fd, size_t size, GError **err)
+create_shm (void *shm, int *fd, size_t size)
 {
   void **p = shm;
   int shm_fd;
 
   // Not accepting the returned buffer is a programming error
-  g_assert(shm);
+  assert(shm);
 
   // Create the SHM
   shm_fd = shmget(IPC_PRIVATE, size,
                   IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
   if (shm_fd < 0) {
-    g_set_error(err, HSP_ERROR, HSP_ERROR_FAILED,
-                "Failed to create SHM: %s", g_strerror(errno));
+    //nih_error_raise_printf(HSP_ERROR_FAILED,
+    //    "Failed to create SHM: %s", strerror(errno));
     return errno;
   }
 
   // Attach
   (*p) = shmat(shm_fd, NULL, 0);
   if ((*p) == ((void *) -1)) {
-    g_set_error(err, HSP_ERROR, HSP_ERROR_FAILED,
-                "Failed to create SHM: %s", g_strerror(errno));
+    //nih_error_raise_printf(HSP_ERROR_FAILED,
+    //    "Failed to create SHM: %s", strerror(errno));
     return errno;
   }
 
@@ -133,15 +133,17 @@ int                ps_ctl_fd;
 int
 main (int argc, char **argv)
 {
-  GError *err;
+  //NihError *err;
 
   int forked = 0;
   int st;
   int i, j;
 
   // Create main "process control" structure
-  if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(process_control_t), &err)) {
-    fprintf(stderr, "Could not initalize file table: %s\n", err->message);
+  if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(process_control_t))) {
+    //err = nih_error_get();
+    //fprintf(stderr, "Could not initalize file table: %s\n", err->message);
+    fprintf(stderr, "Could not initalize file table\n");
     exit(EXIT_FAILURE);
   }
   // Process control data
@@ -158,8 +160,10 @@ main (int argc, char **argv)
     int   fd;
     void *shm;
 
-    if (create_shm(&shm, &fd, BUFFER_SIZE, &err)) {
-      fprintf(stderr, "Could not initalize file table entry: %s\n", err->message);
+    if (create_shm(&shm, &fd, BUFFER_SIZE)) {
+      //err = nih_error_get();
+      //fprintf(stderr, "Could not initalize file table entry: %s\n", err->message);
+      fprintf(stderr, "Could not initalize file table entry\n");
       exit(EXIT_FAILURE);
     }
     if ((j = ps_ctl->ft.nfiles) < MAX_DB_FILES) {
@@ -179,8 +183,8 @@ main (int argc, char **argv)
       exit(EXIT_FAILURE);
     }
 
-    if (create_shm(&shm, &fd, BUFFER_SIZE, &err)) {
-      fprintf(stderr, "Could not initalize file table entry: %s\n", err->message);
+    if (create_shm(&shm, &fd, BUFFER_SIZE)) {
+      fprintf(stderr, "Could not initalize file table entry. Terminating.\n");
       exit(EXIT_FAILURE);
     }
     if ((j = ps_ctl->ft.nfiles) < MAX_DB_FILES) {
@@ -205,10 +209,12 @@ main (int argc, char **argv)
     pid_t pid = fork();
     if (pid == 0) {
       // Child
-      env[0] = g_strdup_printf(PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
-      env[1] = g_strdup_printf(WORKER_ID_ENVVAR "=%d\n", j);
-      if (execle("/home/llama/jics/hsp/build/tools/mcwcat", "mcwcat", "outputfile", "inputfile", NULL, env)) {
-    	fprintf(stderr, "Could not exec: %s\n", g_strerror(errno));
+      asprintf(&(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
+      asprintf(&(env[1]), WORKER_ID_ENVVAR "=%d\n", j);
+      if (execle(argv[1], "mcwcat", "outputfile", "inputfile", NULL, env)) {
+    	fputs("Could not exec: ",stderr);
+	fputs(strerror(errno),stderr);
+	fputc('\n',stderr);
 	exit(EXIT_FAILURE);
       }
     }
@@ -227,7 +233,7 @@ main (int argc, char **argv)
     }
     else {
       // Error
-      g_assert_not_reached();
+      assert(0);
     }
   }
 
@@ -242,7 +248,7 @@ main (int argc, char **argv)
   for (i=0; i<ps_ctl->ft.nfiles; ++i) {
     file_table_entry_t *f = ps_ctl->ft.file + i;
     if (!strcmp(f->name, "outputfile")) {
-      printf("%d: %d\n", i, f->size);
+      printf("%d: %zu\n", i, f->size);
       fwrite(f->shm, 1, f->size, stdout);
       putchar('\n');
     }

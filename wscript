@@ -59,6 +59,14 @@ def configure(conf):
     conf.check_cc(lib='m', header_name='math.h', function_name='floor',
             mandatory=False)
 
+    # POSIX semaphores
+    conf.check_cc(lib='pthread', header_name='semaphore.h', function_name='sem_init',
+	    uselib_store='PTHREAD', mandatory=True)
+    conf.check_cc(lib='pthread', header_name='semaphore.h', function_name='sem_post',
+	    uselib_store='PTHREAD', mandatory=True)
+    conf.check_cc(lib='pthread', header_name='semaphore.h', function_name='sem_wait',
+	    uselib_store='PTHREAD', mandatory=True)
+
     # libexpat1
     foo = conf.check_cc(lib='expat', header_name='expat.h',
             function_name='XML_ParserCreate', uselib_store='EXPAT',
@@ -66,10 +74,12 @@ def configure(conf):
             msg="Checking for 'Expat'")
     conf.env['HAVE_LIBEXPAT'] = foo
 
-    # glib
-    conf.check_cfg(package='glib-2.0', atleast_version='2.30.3',
-            args='--cflags --libs', uselib_store='GLIB2',
+    """
+    # libnih
+    conf.check_cfg(package='libnih', atleast_version='1.0.3',
+            args='--cflags --libs', uselib_store='NIH',
             mandatory=True)
+    """
 
     # libYAML
     conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
@@ -165,5 +175,5 @@ def configure(conf):
         Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('hspwrap lib mcw tools')
+    bld.recurse('hspwrap lib tools')
 

@@ -6,6 +6,7 @@ from waflib import Logs
 
 def build(bld):
 
+    """
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
         bld.program(source='src/%s.c'%t, target=t)
@@ -31,6 +32,7 @@ def build(bld):
     bld.program(source='src/zstat.c', target='zstat', use='zutils')
     if bld.env['HAVE_LIBEXPAT']:
         bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
+    """
 
     # MCW-enabled demos
     bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap')

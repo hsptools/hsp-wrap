@@ -662,7 +662,7 @@ extern int stdiowrap_fputs(const char *s, FILE *stream)
   wf->size += (p-s);
   *(wf->psize) = wf->size;
 
-  fprintf(stderr, "POS: %d SIZE %d\n", wf->pos, wf->size);
+  fprintf(stderr, "POS: %p SIZE %zu\n", wf->pos, wf->size);
 
   // Great success
   return 1;

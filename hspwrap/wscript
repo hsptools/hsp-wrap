@@ -8,10 +8,10 @@ def build(bld):
     mpienv = bld.all_envs['mpicc']
 
     bld.program(source='src/hspwrap.c', target='hspwrap',
-                use='GLIB2 YAML')
+                use='YAML PTHREAD')
 
     bld.program(source='src/hspwrap-ev.c', target='hspwrap-ev',
-                use='GLIB2 YAML ev M')
+                use='YAML ev PTHREAD M')
 
     #bld.program(target='hspwrap', source=src, 'src',
     #            use='M', env=mpienv)
