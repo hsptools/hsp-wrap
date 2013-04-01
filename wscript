@@ -54,11 +54,16 @@ def configure(conf):
     # std Math
     conf.check_cc(lib='m', uselib_store='M', mandatory=True,
             msg="Checking for 'libm' (math library)")
+    # libev wants to know if we have floor()
+    # FIXME: should be able to do use='M' instead of lib='m' here??
+    conf.check_cc(lib='m', header_name='math.h', function_name='floor',
+            mandatory=False)
 
     # libexpat1
-    foo = conf.check_cc(lib='expat', header_name='expat.h', function_name='XML_ParserCreate',
-        uselib_store='EXPAT', define_name='HAVE_EXPAT', mandatory=False,
-        msg="Checking for 'Expat'")
+    foo = conf.check_cc(lib='expat', header_name='expat.h',
+            function_name='XML_ParserCreate', uselib_store='EXPAT',
+            define_name='HAVE_EXPAT', mandatory=False,
+            msg="Checking for 'Expat'")
     conf.env['HAVE_LIBEXPAT'] = foo
 
     # glib
@@ -87,7 +92,23 @@ def configure(conf):
 
         conf.env['VERSION_MYSQL'] = conf.cmd_and_log([mysql_config,'--version'])
 
-    #### Check for Functions ####
+    #### Check for Headers and Functions ####
+    funcs = [
+            ('sys/inotify.h',   'inotify_init'),
+            ('sys/epoll.h',     'epoll_ctl'),
+            ('sys/event.h',     'kqueue'),
+            ('port.h',          'port_create'),
+            ('poll.h',          'poll'),
+            ('sys/select.h',    'select'),
+            ('sys/eventfd.h',   'eventfd'),
+            ('sys/signalfd.h',  'signalfd')
+    ]
+
+    for h, f in funcs:
+        conf.check_cc(header_name=h, mandatory=False)
+        conf.check_cc(header_name=h, function_name=f, mandatory=False)
+
+    #### Only worried about Mandatory Functions ####
 
     # getline
     conf.check_cc(header_name='stdio.h', function_name='getline',
@@ -96,6 +117,37 @@ def configure(conf):
     # nftw from ftw.h (File Tree Walk)
     conf.check_cc(header_name='ftw.h', function_name='nftw',
             uselib_store='NFTW', env=xopen500env)
+
+    # figure out how to get clock_gettime
+    # Attempt 1: Built-in
+    found = conf.check_cc(header_name='time.h', function_name='clock_gettime', mandatory=False)
+    # Attempt 2: Syscall
+    if not found:
+        found = conf.check_cc(fragment='''
+            #include <unistd.h>
+            #include <sys/syscall.h>
+            #include <time.h>
+
+            int main() {
+                struct timespec ts;
+                int status = syscall (SYS_clock_gettime, CLOCK_REALTIME, &ts);
+                return 0;
+            }''',
+            execute=True, define_name='HAVE_CLOCK_SYSCALL', mandatory=False,
+            msg='Checking for clock_gettime syscall', errmsg='not found')
+    # Attempt 3: Try function from librt
+    if not found:
+        found = conf.check_cc(lib='rt', header_name='time.h', function_name='clock_gettime',
+                    mandatory=False, msg='Checking for function clock_gettime from librt')
+        conf.define_cond('HAVE_LIBRT', found)
+
+    # find nanosleep. Built-in, then librt
+    found = conf.check_cc(header_name='time.h', function_name='nanosleep', mandatory=False)
+    if not found:
+        found = conf.check_cc(lib='rt', header_name='time.h', function_name='nanosleep',
+                    mandatory=False, msg='Checking for function nanosleep from librt')
+        conf.define_cond('HAVE_LIBRT', found)
+
 
     #### Additional Configuration ####
 
@@ -110,7 +162,7 @@ def configure(conf):
     if not mysql_config:
         Logs.warn('MySQL library could not be found.  Database related tools will not be built.')
     if not foo:
-	Logs.warn('Expat library could not be found.  XML related tools will not be built.')
+        Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
     bld.recurse('hspwrap lib mcw tools')

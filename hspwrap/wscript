@@ -7,12 +7,13 @@ from waflib import Logs
 def build(bld):
     mpienv = bld.all_envs['mpicc']
 
-    src = '''
-        src/hspwrap.c
-    '''
-
-    bld.program(source=src, target='hspwrap',
+    bld.program(source='src/hspwrap.c', target='hspwrap',
                 use='GLIB2 YAML')
+
+    bld.program(source='src/hspwrap-ev.c', target='hspwrap-ev',
+                use='GLIB2 YAML ev M')
 
     #bld.program(target='hspwrap', source=src, 'src',
     #            use='M', env=mpienv)
+
+    bld.recurse('libev-4.15')

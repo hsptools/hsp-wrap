@@ -1,0 +1,13 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+def build(bld):
+    # Some warnings we expect from libev
+    # Generally: strict-aliasing, unused-result, unused-value
+    env = bld.env.derive()
+    env.append_unique('CFLAGS', '-w')
+
+    bld.stlib(target='ev', source='src/ev.c', includes='. ./ev', env=env,
+              defines='EV_CONFIG_H="%s/hsp-config.h"' % bld.out_dir,
+              export_includes='.')
