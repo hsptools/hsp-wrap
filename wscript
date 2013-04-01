@@ -37,7 +37,7 @@ def configure(conf):
     conf.load('compiler_mpi_c', tooldir=tool_dir)
 
     # Warn about almost anything
-    conf.env.append_unique('CFLAGS', ['-Wall'])
+    conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall']) #, '-Werror'])
 
     # Debug vs Release
     conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O2'])
@@ -47,7 +47,7 @@ def configure(conf):
 
     # Additional environment for modernish xopen/gnu features
     xopen500env = conf.env.derive()
-    xopen500env.DEFINES += ['_XOPEN_SOURCE=500']
+    xopen500env.DEFINES += ['_GNU_SOURCE=1']
 
     #### Check for Libraries ####
 
@@ -120,9 +120,11 @@ def configure(conf):
 
     #### Only worried about Mandatory Functions ####
 
-    # getline
+    # GNU extensions
     conf.check_cc(header_name='stdio.h', function_name='getline',
-            uselib_store='GETLINE')
+            uselib_store='GETLINE', env=xopen500env)
+    conf.check_cc(header_name='stdio.h', function_name='asprintf',
+            uselib_store='ASPRINTF', env=xopen500env)
 
     # nftw from ftw.h (File Tree Walk)
     conf.check_cc(header_name='ftw.h', function_name='nftw',

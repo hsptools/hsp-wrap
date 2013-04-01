@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -12,18 +13,24 @@
 #include <sys/stat.h>
 
 #include <semaphore.h>
+#include <string.h>
 
 #include <errno.h>
 #include <error.h>
 
 #define MAX_PROCESSES  8
-#define NUM_PROCS      8
-#define NUM_JOBS       8
+#define NUM_PROCS      1
+#define NUM_JOBS       1
 #define MAX_DB_FILES   256
 #define BUFFER_SIZE    (1L<<20)
 #define MAX_FILE_PATH  256
 #define PS_CTL_FD_ENVVAR "HSPWRAP_CTL_SHM_FD"
 #define WORKER_ID_ENVVAR "HSPWRAP_WID"
+
+#define MIN(a, b) (((a)<(b))?(a):(b))
+#define MAX(a, b) (((a)>(b))?(a):(b))
+
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
 #define HSP_ERROR 1
 enum HspError {
@@ -31,11 +38,14 @@ enum HspError {
 };
 
 typedef uint16_t wid_t;
+#define PRI_WID PRIu16
+#define SCN_WID SCNu16
 
 /**
  * File description for a virtual file
  */
-typedef struct {
+// TODO: rename shm_size => capacity
+struct file_table_entry {
   // Public
   size_t shm_size;            // Size of the shm (needed for detach)
   int    shm_fd;              // File descriptor of the shm
@@ -45,32 +55,66 @@ typedef struct {
   char   name[MAX_FILE_PATH]; // Virtual name (path) of the file 
   // Private (TODO: Move outside of file_table)
   char  *shm;                 // Pointer to shared data
-} file_table_entry_t;
+};
 
 /**
  * Table of all available virtual files
  */
-typedef struct {
-  int                nfiles;
-  file_table_entry_t file[MAX_DB_FILES];
-} file_table_t;
+struct file_table {
+  int nfiles;
+  struct file_table_entry file[MAX_DB_FILES];
+};
+
+/**
+ * Different states a process may be in (set by process)
+ */
+enum process_state {
+  RUNNING,   // Process in standard running mode
+  EOD,       // End of data, give me more data if you have it 
+  NOSPACE,   // An output buffer is full and needs to be flushed/swapped 
+  FAILED,    // Processor failed unexpectedly 
+  DONE       // Processor completed running and terminated for whatever reason
+};
+
+/**
+ * Command issued by scheduler
+ */
+enum process_cmd {
+  RUN,       // More data is available, do something with it
+  SUSPEND,   // Free as much resources as possible (kill processes, free buffers)
+  RESTORE,   // Reinitialize after a suspend
+  QUIT       // Free all resources and terminate
+};
 
 /**
  * Shared process control structure.  Layout of SHM.
  */
-typedef struct {
+struct process_control {
   int   nprocesses;               // Number of processes
-  sem_t sem_empty;                // Signal exhausted data to parent process
-  sem_t sem_avail[MAX_PROCESSES]; // Signal available data to child processes
 
-  file_table_t ft;                // File descriptors
-} process_control_t;
+  // Between input layer and processes
+  sem_t process_lock[MAX_PROCESSES];
+  sem_t process_ready[MAX_PROCESSES];
+  enum process_state process_state[MAX_PROCESSES];
+  enum process_cmd   process_cmd[MAX_PROCESSES];
+  
+  sem_t sem_service;
 
+  //sem_t sem_empty;                 // Signal exhausted data to parent process (work request)
+  //sem_t sem_avail[MAX_PROCESSES];  // Signal available data to child processes (continue)
+  //sem_t sem_wait_queue;            // Lock wait queue
+  //wid_t wait_queue[MAX_PROCESSES]; // Processes with empty data buffers
 
+  struct file_table ft;            // File descriptors
+};
 
 
 void print_tod ();
 int create_shm (void *shm, int *fd, size_t size);
+
+
+struct process_control *ps_ctl;
+int ps_ctl_fd;
 
 
 /**
@@ -116,7 +160,6 @@ create_shm (void *shm, int *fd, size_t size)
 }
 
 
-
 void
 print_tod ()
 {
@@ -126,9 +169,61 @@ print_tod ()
 }
 
 
+void
+fetch_work (wid_t wid)
+{
+  int i;
+  struct file_table *ft;
+  struct file_table_entry *f;
 
-process_control_t *ps_ctl;
-int                ps_ctl_fd;
+  ft = &ps_ctl->ft;
+  for (i = 0; i < ft->nfiles; ++i) {
+    f = &ft->file[i];
+    if (f->wid == wid && !strcmp(f->name, "inputfile")) {
+      // Prepare data buffer(s)
+      memcpy(f->shm, "Hello World!\n", 13);
+      f->size = 13;
+    }
+  }
+}
+
+
+int
+fork_worker (wid_t wid)
+{
+  char env[2][40];
+  char *env_list[3] = {env[0], env[1], NULL};
+
+  // Start child
+  pid_t pid = fork();
+
+  if (pid == 0) {
+    // Child
+    snprintf(env[0], ARRAY_SIZE(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
+    snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
+
+    if (execle("./mcwcat", "mcwcat", "outputfile", "inputfile", NULL, env_list)) {
+      fputs("Could not exec: ",stderr);
+      fputs(strerror(errno),stderr);
+      fputc('\n',stderr);
+      exit(EXIT_FAILURE);
+    }
+  }
+  else if (pid > 0) {
+    // Parent
+    print_tod();
+    return 0;
+  }
+  return -1;
+}
+
+
+int
+wait_service ()
+{
+  return sem_wait(&ps_ctl->sem_service);
+}
+
 
 int
 main (int argc, char **argv)
@@ -136,27 +231,32 @@ main (int argc, char **argv)
   //NihError *err;
 
   int forked = 0;
-  int st;
-  int i, j;
+  int i, j, wid;
 
   // Create main "process control" structure
-  if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(process_control_t))) {
+  if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(struct process_control))) {
     //err = nih_error_get();
     //fprintf(stderr, "Could not initalize file table: %s\n", err->message);
     fprintf(stderr, "Could not initalize file table\n");
     exit(EXIT_FAILURE);
   }
+
   // Process control data
-  ps_ctl->nprocesses = NUM_PROCS;
-  sem_init(&ps_ctl->sem_empty, 0, 0);
-  for (i=0; i<NUM_PROCS; ++i) {
-    sem_init(&ps_ctl->sem_avail[i], 0, 0);
+  ps_ctl->nprocesses = MIN(NUM_PROCS, NUM_JOBS);
+
+  sem_init(&ps_ctl->sem_service, 1, 0);
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    sem_init(&ps_ctl->process_lock[i], 1, 1);
+    sem_init(&ps_ctl->process_ready[i], 1, 0);
+    ps_ctl->process_state[i] = DONE;
+    ps_ctl->process_cmd[i] = QUIT;
   }
+
   // Empty file table
   ps_ctl->ft.nfiles = 0;
 
   // Create bogus "input" and "output" buffers (one per process for testing)
-  for (i=0; i<NUM_PROCS; ++i) {
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
     int   fd;
     void *shm;
 
@@ -173,9 +273,6 @@ main (int argc, char **argv)
       ps_ctl->ft.file[j].wid      = i;
       ps_ctl->ft.file[j].size     = 0;
       sprintf(ps_ctl->ft.file[j].name, "inputfile");
-
-      memcpy(ps_ctl->ft.file[j].shm, "Hello World!\n", 13);
-      ps_ctl->ft.file[j].size = 13;
 
       ps_ctl->ft.nfiles++;
     } else {
@@ -201,21 +298,66 @@ main (int argc, char **argv)
     }
   }
 
-  char *env[3] = {NULL, NULL, NULL};
 
+  // Initial distribution
+  for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+    // Fetch work into buffers for worker wid (set FTE size and shm data)
+    fetch_work(wid);
+
+    // Prepare process block
+    ps_ctl->process_state[wid] = RUNNING;
+    ps_ctl->process_cmd[wid]   = RUN;
+
+    // Fork process, set env-vars, execute binary
+    if (fork_worker(wid)) {
+      fprintf(stderr, "Failed to fork worker %" PRI_WID "\n", wid);
+    } else {
+      printf("Worker %" PRI_WID " started.\n", wid);
+      forked++;
+    }
+  }
+
+  while (forked) {
+    // Wait for a process to need service
+    fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
+    wait_service();
+    fprintf(stderr, "GOT SERVICE REQUEST!\n");
+    forked--;
+  }
+
+  // Find worker requiring service
+
+  // Feed it more work
+  
+  // Set process to RUN
+
+  // post to ps_ctl->process_ready[wid]
+
+
+
+#if 0
+  // NON-STREAMING MODE
+
+  char *env[3] = {NULL, NULL, NULL};
   // Issue all jobs
   for (j=0; j<NUM_JOBS; ++j) {
-	  printf("ISSUING %d\n", j);
+    int wid = j;
+    printf("ISSUING %d\n", j);
+
+    // Prepare data buffer(s)
+    memcpy(ps_ctl->ft.file[j].shm, "Hello World!\n", 13);
+    ps_ctl->ft.file[j].size = 13;
+
+    // Start child
     pid_t pid = fork();
     if (pid == 0) {
-      // Child
       asprintf(&(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
-      asprintf(&(env[1]), WORKER_ID_ENVVAR "=%d\n", j);
+      asprintf(&(env[1]), WORKER_ID_ENVVAR "=%d\n", wid);
       if (execle(argv[1], "mcwcat", "outputfile", "inputfile", NULL, env)) {
-    	fputs("Could not exec: ",stderr);
-	fputs(strerror(errno),stderr);
-	fputc('\n',stderr);
-	exit(EXIT_FAILURE);
+        fputs("Could not exec: ",stderr);
+        fputs(strerror(errno),stderr);
+        fputc('\n',stderr);
+        exit(EXIT_FAILURE);
       }
     }
     else if (pid > 0) {
@@ -243,10 +385,11 @@ main (int argc, char **argv)
     print_tod();
     printf("Proc exited with status %d. (winding down)\n", st);
   }
+#endif
 
   // Dump output
   for (i=0; i<ps_ctl->ft.nfiles; ++i) {
-    file_table_entry_t *f = ps_ctl->ft.file + i;
+    struct file_table_entry *f = ps_ctl->ft.file + i;
     if (!strcmp(f->name, "outputfile")) {
       printf("%d: %zu\n", i, f->size);
       fwrite(f->shm, 1, f->size, stdout);

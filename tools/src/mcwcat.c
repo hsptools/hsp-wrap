@@ -27,8 +27,10 @@ main(int argc, char **argv)
   for (i = 2; i < argc; ++i) {
     inf = stdiowrap_fopen(argv[i], "r");
     fprintf(stderr, "inf = %p\n", inf);
-    for (j=0; (c = stdiowrap_fgetc(inf)) != EOF; ++j)
+    for (j=0; (c = stdiowrap_fgetc(inf)) != EOF; ++j) {
+      fprintf(stderr,".\n");
       stdiowrap_fputc(c, outf);
+    }
     stdiowrap_fclose(inf);
     stdiowrap_fputs("-----------\n", outf);
     fprintf(stderr, "File %d. Wrote %d bytes\n", i, j);
