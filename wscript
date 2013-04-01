@@ -39,9 +39,6 @@ def configure(conf):
     # Warn about almost anything
     conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall']) #, '-Werror'])
 
-    # Debug vs Release
-    conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O2'])
-
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)
 
@@ -160,6 +157,10 @@ def configure(conf):
                     mandatory=False, msg='Checking for function nanosleep from librt')
         conf.define_cond('HAVE_LIBRT', found)
 
+    #### Stuff that doesn't belong in configuration environment ####
+
+    # Debug vs Release
+    conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O2'])
 
     #### Additional Configuration ####
 

@@ -321,7 +321,7 @@ get_command ()
 static int
 wait()
 {
-  fprintf(stderr, "Worker waiting for service...\n");
+  //fprintf(stderr, "Worker waiting for service...\n");
   sem_post(&ps_ctl->sem_service);
   return sem_wait(&ps_ctl->process_ready[wid]);
 }
@@ -734,7 +734,7 @@ stdiowrap_fputs (const char *s, FILE *stream)
   wf->size += (p-s);
   *(wf->psize) = wf->size;
 
-  fprintf(stderr, "POS: %p SIZE %zu\n", wf->pos, wf->size);
+  //fprintf(stderr, "POS: %p SIZE %zu\n", wf->pos, wf->size);
 
   // Great success
   return 1;

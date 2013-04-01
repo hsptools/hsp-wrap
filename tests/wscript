@@ -17,5 +17,9 @@ def build(bld):
         bld.program(source='{0}.c'.format(t), target=t,
                     use='stdiowrap')
 
-    #bld.program(target='hspwrap', source=src, 'src',
-    #            use='M', env=mpienv)
+    tests = [
+        'test-fgets-std',
+    ]
+
+    for t in tests:
+        bld.program(source='{0}.c'.format(t), target=t)

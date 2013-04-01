@@ -20,8 +20,8 @@
 
 #include <hsp/process-control.h>
 
-#define NUM_PROCS      1
-#define NUM_JOBS       1
+#define NUM_PROCS      2
+#define NUM_JOBS       10000000
 #define BUFFER_SIZE    (1L<<20)
 
 #define MIN(a, b) (((a)<(b))?(a):(b))
@@ -229,6 +229,8 @@ main (int argc, char **argv)
   int forked = 0;
   int i, j, wid;
 
+  struct timeval tv[2];
+
   if (argc != 2) {
     fputs("Invalid number of arguments\n", stderr);
     fputs("usage: hspwrap EXEFILE\n", stderr);
@@ -248,6 +250,7 @@ main (int argc, char **argv)
 
   // Process control data
   ps_ctl->nprocesses = MIN(NUM_PROCS, NUM_JOBS);
+  printf("Processes: %d\n", ps_ctl->nprocesses);
 
   sem_init(&ps_ctl->sem_service, 1, 0);
   for (i = 0; i < ps_ctl->nprocesses; ++i) {
@@ -325,15 +328,14 @@ main (int argc, char **argv)
     }
   }
 
-  //while (forked) {
+  fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
+
+  gettimeofday(tv+0, NULL);
+  for (i=NUM_JOBS; i;) {
     // Wait for a process to need service
-    fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
     wait_service();
     for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-      fprintf(stderr, "GOT SERVICE REQUEST!\n");
-
       sem_wait(&ps_ctl->process_lock[wid]);
-      fprintf(stderr, "PS STATE = %d, status = %d\n", ps_ctl->process_state[wid], worker_ps[wid].status);
 
       // Set any state from ended processes
       if (worker_ps[wid].status_changed) {
@@ -347,11 +349,11 @@ main (int argc, char **argv)
 
       switch (ps_ctl->process_state[wid]) {
       case EOD:
-        fprintf(stderr, "FETCHING MORE DATA\n");
 	fetch_work(wid, "That's all folks!\n");
 	// TODO: Move process_* changes to fetch_work(); ?
 	ps_ctl->process_cmd[wid] = RUN;
 	sem_post(&ps_ctl->process_ready[wid]);
+	i--;
         break;
       case NOSPACE:
         fprintf(stderr, "PROCESS NO SPACE\n");
@@ -374,54 +376,11 @@ main (int argc, char **argv)
       }
       sem_post(&ps_ctl->process_lock[wid]);
     }
-
-    fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
-    wait_service();
-    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-      fprintf(stderr, "GOT SERVICE REQUEST!\n");
-
-      sem_wait(&ps_ctl->process_lock[wid]);
-      fprintf(stderr, "PS STATE = %d, status = %d\n", ps_ctl->process_state[wid], worker_ps[wid].status);
-
-      // Set any state from ended processes
-      if (worker_ps[wid].status_changed) {
-        if (WIFSIGNALED(worker_ps[wid].status)) {
-          ps_ctl->process_state[wid] = FAILED;
-        } else if (WIFEXITED(worker_ps[wid].status)) {
-          ps_ctl->process_state[wid] = DONE;
-        }
-        worker_ps[wid].status_changed = 0;
-      }
-
-      switch (ps_ctl->process_state[wid]) {
-      case EOD:
-	ps_ctl->process_cmd[wid] = QUIT;
-	sem_post(&ps_ctl->process_ready[wid]);
-        break;
-      case NOSPACE:
-        fprintf(stderr, "PROCESS NO SPACE\n");
-      case FAILED:
-        fprintf(stderr, "PROCESS FAILED\n");
-        ps_ctl->process_state[wid] = IDLE;
-        worker_ps[wid].pid = 0;
-        worker_ps[wid].status = 0;
-        break;
-      case DONE:
-        fprintf(stderr, "PROCESS QUIT\n");
-        ps_ctl->process_state[wid] = IDLE;
-        worker_ps[wid].pid = 0;
-        worker_ps[wid].status = 0;
-        break;
-      case IDLE:
-      case RUNNING:
-        // Not a process of interest, move on.
-        break;
-      }
-      sem_post(&ps_ctl->process_lock[wid]);
-    }
-
+  }
+  gettimeofday(tv+1, NULL);
 
   // Dump output
+  /*
   for (i=0; i<ps_ctl->ft.nfiles; ++i) {
     struct file_table_entry *f = ps_ctl->ft.file + i;
     if (!strcmp(f->name, "outputfile")) {
@@ -430,6 +389,14 @@ main (int argc, char **argv)
       putchar('\n');
     }
   }
+  */
+
+  long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
+           + (tv[1].tv_usec - tv[0].tv_usec);
+
+  printf("Time taken: %lfs (%lfms average)\n",
+      ((double)t) / 1000000.0,
+      ((double)t) * ps_ctl->nprocesses / NUM_JOBS);
 
   return 0;
 }
