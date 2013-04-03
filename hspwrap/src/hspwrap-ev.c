@@ -11,13 +11,14 @@
 #include <sys/shm.h>
 #include <sys/stat.h>
 
+#include <aio.h>
 #include <ev/ev.h>
 
 #include "errno.h"
 #include "error.h"
 
-#define NUM_PROCS 2
-#define NUM_JOBS  10000000
+#define NUM_PROCS 4
+#define NUM_JOBS  100
 
 #define HSP_ERROR 1
 enum HspError {
@@ -26,11 +27,8 @@ enum HspError {
 
 void print_tod ();
 
-// every watcher type has its own typedef'd struct
-// with the name ev_<type>
-ev_timer timeout_watcher;
-ev_io    stdin_watcher;
 ev_io    input_watcher[NUM_PROCS];
+struct   aiocb aios[NUM_PROCS];
 int      fds[NUM_PROCS];
 int      remaining = NUM_JOBS;
 
@@ -43,40 +41,28 @@ print_tod ()
 }
 
 
-// all watcher callbacks have a similar signature
-// this callback is called when data is readable on stdin
-static void
-stdin_cb (EV_P_ struct ev_io *w, int revents)
-{
-  puts ("stdin ready");
-  // for one-shot events, one must manually stop the watcher
-  // with its corresponding stop function.
-  ev_io_stop (EV_A_ w);
-
-  // this causes all nested ev_loop's to stop iterating
-  ev_unloop (EV_A_ EVUNLOOP_ALL);
-}
-
 static void
 input_cb (EV_P_ struct ev_io *w, int revents)
 {
-  write(w->fd, "That's all folks!\n", 18);
-  remaining--;
+  int i = (int)w->data;
   if (remaining <= 0) {
+	  printf("Killing watcher %d", i);
     // Done
-    ev_io_stop (EV_A_ w);
-    ev_unloop (EV_A_ EVUNLOOP_ALL);
+    ev_io_stop(EV_A_ w);
+    //ev_unloop(EV_A_ EVUNLOOP_ALL);
+  } else {
+#if 1
+    write(w->fd, "That's all folks!\n", 18);
+#else
+    aios[i].aio_fildes = w->fd;
+    aios[i].aio_buf    = "That's all folks!\n";
+    aios[i].aio_nbytes = 18;
+    aio_write(aios + i);
+#endif
+    remaining--;
   }
 }
 
-// another callback, this time for a time-out
-static void
-timeout_cb (EV_P_ struct ev_timer *w, int revents)
-{
-  puts ("timeout");
-  // this causes the innermost ev_loop to stop iterating
-  ev_unloop (EV_A_ EVUNLOOP_ONE);
-}
 
 int
 get_rundir()
@@ -108,12 +94,20 @@ get_rundir()
   return f_run;
 }
 
+char *gnu_basename(char *path)
+{
+	    char *base = strrchr(path, '/');
+	        return base ? base+1 : path;
+}
+
 int
 main (int argc, char **argv)
 {
+  struct ev_loop *loop;
+  struct timeval  tv[2];
+
   char dirname[10];
-  int rundir, rundirs[NUM_PROCS], i;
-  struct timeval tv[2];
+  int  rundir, rundirs[NUM_PROCS], i;
  
   rundir = get_rundir();
   
@@ -132,30 +126,13 @@ main (int argc, char **argv)
     if ((mkfifoat(rundirs[i], "inputfile", S_IRUSR | S_IWUSR)) != 0) {
       fprintf(stderr, "%s: could not create FIFO: %s\n", "inputfile", strerror(errno));
     }
-      
-    fds[i] = openat(rundirs[i], "inputfile", O_RDWR /*Consider simply O_RDONLY*/);
-    write(fds[i], "Hello World!\n", 13);
   }
 
   // use the default event loop unless you have special needs
-  struct ev_loop *loop = ev_default_loop (EVBACKEND_EPOLL);
+  loop = ev_default_loop (EVBACKEND_SELECT); //EVFLAG_AUTO);
+
   //ev_set_timeout_collect_interval (loop, 0.0001);
   //ev_set_io_collect_interval (loop, 0.0001);
-
-  ev_io    *w_input;
-  ev_io    *w_stdin = &stdin_watcher;
-  ev_timer *w_t     = &timeout_watcher;
-
-  // initialise an io watcher, then start it
-  // this one will watch for stdin to become readable
-  //ev_io_init (w_stdin, stdin_cb, STDIN_FILENO, EV_READ);
-  //ev_io_start (loop, w_stdin);
-
-  for (i=0; i<NUM_PROCS; ++i) {
-    w_input = input_watcher + i;
-    ev_io_init (w_input, input_cb, fds[i], EV_WRITE);
-    ev_io_start (loop, w_input);
-  }
 
   // Start children
   for (i=0; i<NUM_PROCS; ++i) {
@@ -163,10 +140,10 @@ main (int argc, char **argv)
     if (pid == 0) {
       // Child
       fchdir(rundirs[i]);
-      if (execle(argv[1], "test", "outputfile", "inputfile", NULL, NULL)) {
-	fputs("Could not exec: ",stderr);
-	fputs(strerror(errno),stderr);
-	fputc('\n',stderr);
+      if (execle(argv[1], gnu_basename(argv[1]), "outputfile", "inputfile", NULL, NULL)) {
+	fputs("Could not exec: ", stderr);
+	fputs(strerror(errno), stderr);
+	fputc('\n', stderr);
 	exit(EXIT_FAILURE);
       }
     }
@@ -176,15 +153,27 @@ main (int argc, char **argv)
     }
   }
 
-  // initialise a timer watcher, then start it
-  // simple non-repeating 5.5 second timeout
-  //ev_timer_init (w_t, timeout_cb, 5.5, 0.);
-  //ev_timer_start (loop, &timeout_watcher);
+  // Initialize watchers
+  for (i=0; i<NUM_PROCS; ++i) {
+    ev_io *wio = &input_watcher[i];
+
+    fds[i] = openat(rundirs[i], "inputfile", O_WRONLY /*Consider simply O_WRONLY*/);
+    wio->data = (void*)i;
+    ev_io_init(wio, input_cb, fds[i], EV_WRITE);
+    ev_io_start(loop, wio);
+  }
 
   // now wait for events to arrive
   gettimeofday(tv+0, NULL);
   ev_loop (loop, 0);
   gettimeofday(tv+1, NULL);
+
+  // Hang up
+  puts("Closing pipes.");
+  for (i=0; i<NUM_PROCS; ++i) {
+    close(fds[i]);
+  } 
+  puts("Done.");
 
   // unloop was called, so exit
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
@@ -193,6 +182,18 @@ main (int argc, char **argv)
   printf("Time taken: %lfs (%lfms average)\n",
       ((double)t) / 1000000.0,
       ((double)t) * NUM_PROCS / NUM_JOBS);
+
+  puts("Waiting for children processes to terminate...");
+  pid_t pid;
+  do {
+    pid = wait(NULL);
+    if(pid == -1 && errno != ECHILD) {
+      perror("Error during wait()");
+      abort();
+    }
+  } while (pid > 0);
+  
+  puts("Done.");
 
   return 0;
 }

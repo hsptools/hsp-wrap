@@ -9,7 +9,7 @@ main(int argc, char **argv)
   char c[40];
   int i;
 
-  //outf = fopen(argv[1], "w");
+  outf = fopen(argv[1], "w");
   inf  = fopen(argv[2], "r");
 
   if (!outf || !inf) {
@@ -18,11 +18,12 @@ main(int argc, char **argv)
   }
 
   for (i=0; fgets(c, sizeof(c), inf) != NULL; ++i) {
-    //fputs(c, outf);
+    //sleep(1);	  
+    fputs(c, outf);
   }
 
   fclose(inf);
-  //fclose(outf);
+  fclose(outf);
 
   fprintf(stderr, "Wrote %d lines\n. Done.", i);
   return EXIT_SUCCESS;

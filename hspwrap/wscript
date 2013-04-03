@@ -10,7 +10,7 @@ def build(bld):
     bld.program(source='src/hspwrap.c', target='hspwrap',
                 use='hsp YAML PTHREAD')
 
-    bld.program(source='src/hspwrap-ev.c', target='hspwrap-ev',
+    bld.program(lib='rt', source='src/hspwrap-ev.c', target='hspwrap-ev',
                 use='hsp YAML ev PTHREAD M')
 
     bld.recurse('libev-4.15')

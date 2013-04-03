@@ -160,7 +160,7 @@ def configure(conf):
     #### Stuff that doesn't belong in configuration environment ####
 
     # Debug vs Release
-    conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O2'])
+    conf.env.append_unique('CFLAGS', ['-O0', '-g'] if conf.options.debug else ['-O3'])
 
     #### Additional Configuration ####
 

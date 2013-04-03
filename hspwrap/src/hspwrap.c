@@ -21,7 +21,7 @@
 #include <hsp/process-control.h>
 
 #define NUM_PROCS      2
-#define NUM_JOBS       10000000
+#define NUM_JOBS       100
 #define BUFFER_SIZE    (1L<<20)
 
 #define MIN(a, b) (((a)<(b))?(a):(b))
