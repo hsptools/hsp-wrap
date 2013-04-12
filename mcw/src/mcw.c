@@ -452,6 +452,7 @@ static void Master(int processes, int rank)
   masterinfo_t *mi=&MasterInfo; // Just to shorten
   seq_data_t    sequence;
   int           nseq,seqsz,blkseqs,index,i,fp,max_req;
+  int           err;
   double        pd,lpd;
   long          st;
 
@@ -464,7 +465,7 @@ static void Master(int processes, int rank)
   mi->nslaves = processes-1;
   Vprint(SEV_NRML,"Slaves:   %d\t(processes)\n",mi->nslaves);
   Vprint(SEV_NRML,"Workers:  %d\t(threads)\n\n",mi->nslaves*MCW_NCORES);
-  Init_Master(&mi);
+  Init_Master();
 
 	max_req = ceil((float)mi->nqueries/(mi->nslaves*MCW_NCORES));
 
@@ -477,8 +478,9 @@ static void Master(int processes, int rank)
 
   // Post a receive work request from each slave
   for(i=0; i<mi->nslaves; i++) {
-    MPI_Irecv(&(mi->slaves[i].request), sizeof(request_t), MPI_BYTE, mi->slaves[i].rank, 
+    err = MPI_Irecv(&(mi->slaves[i].request), sizeof(request_t), MPI_BYTE, mi->slaves[i].rank, 
               TAG_REQUEST, MPI_COMM_WORLD, &(mi->mpi_req[i]) );
+    printf("MPI: Master Irecv for slave %d: %d\n", i, err);
   }
 
   // Hand out work units to requestors while there is work
@@ -525,9 +527,10 @@ static void Master(int processes, int rank)
       // Record that a send is in flight to this slave
       mi->slaves[index].sflg = 1;
       // And post a receive for another work unit request from this slave
-      MPI_Irecv(&(mi->slaves[index].request), sizeof(request_t), MPI_BYTE,
+      err = MPI_Irecv(&(mi->slaves[index].request), sizeof(request_t), MPI_BYTE,
                 mi->slaves[index].rank, TAG_REQUEST, MPI_COMM_WORLD, 
                 &(mi->mpi_req[index]));
+      printf("MPI: Master Irecv for slave %d: %d\n", index, err);
       break;
     default:
       // Unknown request type
@@ -873,10 +876,6 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     asprintf(&(new_environ[i++]), "MCW_WID=%d", wid);
     // Null terminate
     new_environ[i] = NULL;
-    nenv = i;
-    for (i=0; i<nenv; ++i) {
-      printf("  %d.%d: %s\n", rank, wid, new_environ[i]);
-    }
 
     // Run the DB search
     if( execve(exe_name, argv, new_environ) < 0 ) {
@@ -1705,7 +1704,7 @@ static void Slave(int processes, int rank)
   compressedb_t  *cb, *cbi;
   workunit_t     *workunit;
   request_t      *request;
-  int             qd=0,i,j,sz,base_id;
+  int             qd=0,i,j,sz,base_id, err;
 
   gettimeofday(&tv, NULL);
   Vprint(SEV_TIMING,"[TIMING] Slave %d started at %d.%06d.\n",
@@ -1752,8 +1751,9 @@ static void Slave(int processes, int rank)
     Vprint(SEV_DEBUG,"Slave %d asking for more work from master (qd:%d).\n",
            SlaveInfo.rank,qd);
     request->count = MCW_NCORES-qd;
-    MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
+    err = MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
              TAG_REQUEST, MPI_COMM_WORLD);
+    printf("MPI: Slave with rank %d sent request: %d\n", SlaveInfo.rank, err);
     tscq_entry_free(si->rq,request);
 
     // Read the work unit from master

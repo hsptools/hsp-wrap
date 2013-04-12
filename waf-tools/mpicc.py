@@ -15,7 +15,7 @@ int main (int argc, char **argv) {
 '''
 
 def find_mpi_cc(conf):
-	cc=conf.find_program(['mpicc','cc'],var='MPI_CC')
+	cc=conf.find_program(['mpiicc','mpicc','cc'],var='MPI_CC')
 	cc=conf.cmd_to_list(cc)
 	
 	# Verify actual MPI implementation

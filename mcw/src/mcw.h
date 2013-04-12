@@ -27,7 +27,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_TIMING
+#define VERBOSITY   SEV_NRML
 
 
 // Maximum number of DB files
