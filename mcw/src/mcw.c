@@ -26,6 +26,8 @@
 #define UNUSED(param) (void)(param)
 #define MCW_BIN       "mcw"
 
+extern char **environ;
+
 ////////////////////////////////////////////////////////////////////////////////
 //                               Global State                                 //
 ////////////////////////////////////////////////////////////////////////////////
@@ -184,30 +186,40 @@ static void Report_Timings(int rank,
 //                 Helpers for bad fork/free implementations                  //
 ////////////////////////////////////////////////////////////////////////////////
 
+#if 0
+#define fork_init_lock() pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL)
+#define fork_lock()      pthread_mutex_lock(&(SlaveInfo.fork_lock))
+#define fork_unlock()    pthread_mutex_unlock(&(SlaveInfo.fork_lock))
+#else
+#define fork_init_lock()
+#define fork_lock()
+#define fork_unlock()
+#endif
+
 static int safe_inflateEnd(z_stream *strm)
 {
   int ret;
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   ret = inflateEnd(strm);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
   return ret;
 }
 
 
 static void safe_free(void *p)
 {
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   free(p);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
 }
   
 
 static void* safe_malloc(size_t sz)
 {
   void *p;
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   p = malloc(sz);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
   return p;
 }
   
@@ -826,16 +838,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
   loadstride = nodes/args.ndbs;
 
   // Lock until child process signals us with SIGUSR1
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
-
-  // Setup the environment for the child process
-  sprintf(name,"%d",file_sizes_fd);
-  setenv("MCW_FI_SHM_FD",name,1);
-  sprintf(name,"%s/%s%d/%s",
-          args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
-  setenv("MCW_DB_FULL_PATH",name,1);
-  sprintf(name,"%d",wid);
-  setenv("MCW_WID",name,1);
+  fork_lock();
 
   // Build a name for the exe
   sprintf(exe_name,"./%s",args.exe_base);
@@ -844,20 +847,43 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     // This is the MPI slave process (parent)
     Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
     // Wait for child process to start
-    sleep(2);
-    sigusr_forkunlock(0);
+    // sleep(2);
+    fork_unlock();
     // Wait for child to finish; handle its IO
     io_time = Worker_ChildIO(rank,pid,wid,bid,qndxs,rndxs);
   } else if( !pid ) {
     // This is the Child process
     //PG Worker_Child_MapFDs(rank,wid);
+    
+    // Setup the environment for the child process
+    int nenv, i;
+    char **env;
+    for (nenv=0, env=environ; *env; nenv++, env++);
+    
+    // FIXME: LEAK!!
+    char **new_environ = malloc(sizeof(char*) * (nenv+4));
+    // Copy original values
+    for (i=0; i < nenv; i++) {
+      new_environ[i] = environ[i];
+    }
+    // Add our own
+    asprintf(&(new_environ[i++]), "MCW_FI_SHM_FD=%d", file_sizes_fd);
+    asprintf(&(new_environ[i++]), "MCW_DB_FULL_PATH=%s/%s%d/%s", 
+	     args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
+    asprintf(&(new_environ[i++]), "MCW_WID=%d", wid);
+    // Null terminate
+    new_environ[i] = NULL;
+    nenv = i;
+    for (i=0; i<nenv; ++i) {
+      printf("  %d.%d: %s\n", rank, wid, new_environ[i]);
+    }
 
     // Run the DB search
-    if( execv(exe_name,argv) < 0 ) {
+    if( execve(exe_name, argv, new_environ) < 0 ) {
       Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
       perror(MCW_BIN);
       // FIXME: is this the child process? We should kill(getppid(),...)
-      sigusr_forkunlock(0);
+      fork_unlock();
     }
     // FIXME: Is this code unreachable?
     Vprint(SEV_ERROR,"Worker's child failed to exec DB! (unreachable?)\n");
@@ -867,7 +893,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     // fork() returned an error code
     Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
     perror(MCW_BIN);
-    sigusr_forkunlock(0);
+    fork_unlock();
   }
 
   // Return the time it took to do IO.
@@ -1579,7 +1605,7 @@ static void Init_Slave()
   CreateResultBuffers();
 
   // Initialize experimental fork lock 
-  pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL);
+  fork_init_lock();
 }
 
 
@@ -2356,7 +2382,7 @@ static void sighndler(int arg)
 void sigusr_forkunlock(int arg)
 {
   UNUSED(arg);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
 }
 
 static void exitfunc()
