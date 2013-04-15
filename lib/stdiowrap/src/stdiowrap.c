@@ -3,11 +3,11 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/types.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/mman.h>
 #include <stdarg.h>
 
 
@@ -115,6 +115,12 @@ static void init_SHM()
   int   fd;
 
   if( !file_sizes ) {
+    char  shmname[256];
+
+    snprintf(shmname, 256, "/mcw.%d.%s", getppid(), "file_sizes");
+    fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    
+    /*
     // The file descriptors for the SHMs will already be available to
     // the current process, as it is the child of the process that
     // created the SHMs.  We only need to open the SHM.  Note that
@@ -128,10 +134,16 @@ static void init_SHM()
       fprintf(stderr,"stdiowrap: Failed to parse MCW_FI_SHM_FD env var.\n");
       exit(1);
     }
+    */
+
     // Attach the SHM
-    file_sizes = shmat(fd, NULL, 0);
-    if( file_sizes == ((void*)-1) ) {
-      fprintf(stderr,"stdiowrap: Failed to attach index SHM.\n");
+    struct stat st;
+    fstat(fd, &st);
+    file_sizes = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, 
+                      MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+                      fd, 0);
+    if( file_sizes == MAP_FAILED ) {
+      fprintf(stderr,"stdiowrap: Failed to attach index SHM (%d): %s\n", fd, strerror(errno));
       exit(1);
     }
   }
@@ -150,8 +162,15 @@ static int fill_WFILE_data_SHM(WFILE *wf)
   // Only fill for files that are listed
   for(i=0; i < file_sizes->nfiles; i++) {
     if( !strcmp(file_sizes->fs[i].name,wf->name) ) {
+      char  shmname[256];
+
+      snprintf(shmname, 256, "/mcw.%d.%d", getppid(), i);
+      int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+      
       // Attach the shared memory segment
-      wf->data = shmat(file_sizes->fs[i].fd, NULL, 0);
+      wf->data = mmap(NULL, file_sizes->fs[i].shmsize, PROT_READ | PROT_WRITE, 
+                      MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+                      fd, 0);
       if( wf->data == ((void*)-1) ) {
         fprintf(stderr,"stdiowrap: Failed to attach SHM.\n");
 	      exit(1);
@@ -174,7 +193,7 @@ static void free_WFILE_data_SHM(WFILE *wf)
   // The parent process should be responsible for all
   // SHM cleaning ( we just attach/detach ).
   if( wf->data ) {
-    shmdt(wf->data);
+    munmap(wf->data, wf->tsize);
   }
 }
 #endif

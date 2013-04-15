@@ -55,6 +55,7 @@ volatile int  result_thread_error=0;
 // file_sizes[0] is the exe file
 filesizes_t *file_sizes;
 int          file_sizes_fd;
+int          file_is_shm[MAX_DB_FILES];
 void        *shm_exe;
 long         shm_exe_sz;
 
@@ -248,22 +249,31 @@ static void Abort(int arg)
 ////////////////////////////////////////////////////////////////////////////////
 
 
-static void* Create_SHM(long shmsz, int *fd)
+static void* Create_SHM(char *name, long shmsz, int *fd)
 {
   void *shm;
   int   shmfd;
+  char  shmname[256];
+
+  snprintf(shmname, 256, "/mcw.%d.%s", getpid(), name);
 
   // Create the shared memory segment, and then mark for removal.
   // As soon as all attachments are gone, the segment will be
   // destroyed by the OS.
-  shmfd = shmget(IPC_PRIVATE, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  shmfd = shm_open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
   if( shmfd < 0 ) {
     Vprint(SEV_ERROR,"Failed to make SHM (%d).  Terminating.\n",errno);
     Abort(1);
   }
-  shm = shmat(shmfd, NULL, 0);
-  shmctl(shmfd, IPC_RMID, NULL);
-  if( shm == ((void*)-1) ) {
+  if ((ftruncate(shmfd, shmsz)) != 0) {
+    Vprint(SEV_ERROR,"Failed to resize SHM (%d).  Terminating.\n",errno);
+    Abort(1);
+  }
+  shm = mmap(NULL, shmsz, PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
+
+  if( shm == MAP_FAILED) {
     Vprint(SEV_ERROR,"Failed to attach SHM. Terminating.\n");
     Abort(1);
   }
@@ -280,9 +290,12 @@ static void* Create_DBSHM(char *name, long shmsz)
 {
   int    fd;
   void  *shm;
+  char  shmname[10];
+
+  snprintf(shmname, 10, "%d", file_sizes->nfiles);
 
   // Create the shared memory segment
-  shm = Create_SHM(shmsz,&fd);  
+  shm = Create_SHM(shmname, shmsz, &fd);  
 
   // Save some info about the SHM
   if( file_sizes->nfiles < MAX_DB_FILES ) {
@@ -290,6 +303,7 @@ static void* Create_DBSHM(char *name, long shmsz)
     file_sizes->fs[file_sizes->nfiles].shmsize = shmsz;
     file_sizes->fs[file_sizes->nfiles].size    = shmsz;
     file_sizes->fs[file_sizes->nfiles].fd      = fd;
+    file_is_shm[file_sizes->nfiles]            = 1;
     sprintf(file_sizes->fs[file_sizes->nfiles].name,"%s",name);
     file_sizes->nfiles++;
   } else {
@@ -1953,6 +1967,8 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   (*ct)=0.0f;
   MPI_Barrier(MPI_COMM_WORLD);
 
+  memset(file_is_shm, 0, sizeof(int)*MAX_DB_FILES);
+
   // Figure out our role w.r.t the DB loading
   if( loadstride > 1 ) {
     // A DB load will cover more than one node; comm group needed
@@ -1990,7 +2006,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       // We are a loading rank and we are a bcast send rank.
       ////////////////////////////////////////////////////////////
       // Get file size array ready
-      file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+      file_sizes = Create_SHM("file_sizes",sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
@@ -2057,7 +2073,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       // We are a bcast receive rank.
       ////////////////////////////////////////////////////////////
       // Get file size array ready
-      file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+      file_sizes = Create_SHM("file_sizes", sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the two in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
@@ -2113,7 +2129,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
     // A DB load will cover only one node.  Load once per node.
     ////////////////////////////////////////////////////////////
     // Get file size array ready
-    file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+    file_sizes = Create_SHM("file_sizes", sizeof(filesizes_t),&file_sizes_fd);
     memset(file_sizes,0,sizeof(filesizes_t));
     // Create the two in/out SHMs per core
     for(i=0; i<MCW_NCORES; i++) {
@@ -2387,10 +2403,25 @@ void sigusr_forkunlock(int arg)
 
 static void exitfunc()
 {
+  int i;
+  char shmname[256];
+
   // Be verbose
   if( !Rank ) {
     write(2,"ms: atexit(); cleaning up.\n",27);
   }
+
+  // Free SHMs
+  for (i=0; i<file_sizes->nfiles; ++i) {
+    if (file_is_shm[i]) {
+      snprintf(shmname, 256, "/mcw.%d.%d", getpid(), i);
+      shm_unlink(shmname);
+    }
+  }
+  
+  // Free index SHM
+  snprintf(shmname, 256, "/mcw.%d.file_sizes", getpid());
+  shm_unlink(shmname);
 
   cleanup();
 }
