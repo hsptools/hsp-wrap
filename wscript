@@ -45,6 +45,9 @@ def configure(conf):
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)
 
+    conf.check_cfg(package='glib-2.0', atleast_version='2.16',
+            args='--cflags --libs', uselib_store='GLIB2', mandatory=True)
+
     # zlib
     try:
         conf.check_cfg(package='zlib', atleast_version='1.2.3',
@@ -94,5 +97,5 @@ def configure(conf):
 	Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('lib mcw tools')
+    bld.recurse('lib mcw tools tests')
 

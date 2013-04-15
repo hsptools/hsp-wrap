@@ -1,0 +1,21 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+from waflib import Logs
+
+def build(bld):
+    mpienv = bld.all_envs['mpicc']
+
+    tests = [
+        'test-fgetc',
+        'test-fgets',
+        'test-kill'
+    ]
+
+    for t in tests:
+        bld.program(source='{0}.c'.format(t), target=t,
+                    use='stdiowrap')
+
+    #bld.program(target='hspwrap', source=src, 'src',
+    #            use='M', env=mpienv)

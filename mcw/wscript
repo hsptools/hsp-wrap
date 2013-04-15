@@ -12,6 +12,6 @@ def build(bld):
     '''
 
     bld.program(target='mcw', source=src, includes='.. ./src',
-                use='M ZLIB', env=mpienv)
+                use='M ZLIB', env=mpienv) #, lib='dbfork_64')
     #bld.program(source='SHMclean.c', target='SHMclean', env=mpienv)
     #bld.program(source='wrap.c', target='wrap', env=mpienv)
