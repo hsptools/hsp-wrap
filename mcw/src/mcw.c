@@ -1388,7 +1388,7 @@ void* ResultWriter(void *arg)
     }
 
     // Setup/Open output file 
-    if( (f[i]=open(SlaveInfo.out_files[i], O_CREAT|O_EXCL|O_WRONLY)) == -1) {
+    if( (f[i]=open(SlaveInfo.out_files[i], O_CREAT|O_EXCL|O_WRONLY, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) == -1) {
       Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file '%s'.  Terminating.\n",
 	     SlaveInfo.out_files[i], SlaveInfo.rank);
       result_thread_error = 1;
@@ -2490,12 +2490,11 @@ void* killtimer(void *arg)
 }
 
 
-int main(int argc, char **argv)
+int mpi_main(int argc, char **argv)
 {
   struct timeval  st,et;
   float           lt,ct;
   int             processes,rank;
-
 
   // Be sure we can catch some basic signals to ensure
   // all SHMs can be removed, even in case of error.
@@ -2583,6 +2582,33 @@ int main(int argc, char **argv)
   // Done with MPI
   MPI_Finalize();
   return 0;
+}
+
+
+int psmgr_main(int argc, char **argv, int mpi_pid)
+{
+  int st;
+
+  fprintf(stderr, "Waiting for MPI process (%d) to die...\n", mpi_pid);
+  do {
+    waitpid(mpi_pid, &st, 0);
+  } while(!WIFEXITED(st));
+
+  fprintf(stderr, "MPI process (%d) has exited. Goodbye.\n", mpi_pid);
+  return WEXITSTATUS(st);
+}
+
+int main(int argc, char **argv)
+{
+  int mpi_pid;
+
+  if( (mpi_pid=fork()) > 0 ) {
+    return psmgr_main(argc, argv, mpi_pid);
+  } else if( !mpi_pid ) {
+    return mpi_main(argc, argv);
+  } else {
+    Vprint(SEV_ERROR,"Could not fork main MPI process.  Terminating.\n");
+  }
 }
 
 // vim: ts=8:sts=2:sw=2
