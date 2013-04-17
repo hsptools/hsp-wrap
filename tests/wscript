@@ -15,7 +15,7 @@ def build(bld):
 
     for t in tests:
         bld.program(source='{0}.c'.format(t), target=t,
-                    use='stdiowrap')
+                    use='stdiowrap', lib='rt')
 
     #bld.program(target='hspwrap', source=src, 'src',
     #            use='M', env=mpienv)

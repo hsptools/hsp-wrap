@@ -855,6 +855,13 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
   nodes      = procs;
   loadstride = nodes/args.ndbs;
 
+  fprintf(stderr, "%d.%d: Pretending to run job\n", rank, wid);
+  // TODO: Worker_WriteResults
+  sleep(1);
+  fprintf(stderr, "%d.%d: Done pretending\n", rank, wid);
+
+
+#if 0
   // Lock until child process signals us with SIGUSR1
   fork_lock();
 
@@ -909,6 +916,7 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
     perror(MCW_BIN);
     fork_unlock();
   }
+#endif
 
   // Return the time it took to do IO.
   return io_time;

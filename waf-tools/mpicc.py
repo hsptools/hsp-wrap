@@ -43,6 +43,10 @@ def find_mpi_cc(conf):
 	conf.env.SHLIB_MARKER = []
 	conf.env.STLIB_MARKER = []
 
+	# MT sucks on Intel
+	conf.env.append_unique('CFLAGS', ['-mt_mpi'])
+	conf.env.append_unique('LDFLAGS', ['-mt_mpi'])
+
 	# done with MPI-Specific ConfigSet
 	conf.setenv('')
 

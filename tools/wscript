@@ -14,7 +14,7 @@ def build(bld):
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
     bld.program(source='src/compressfasta.c', target='compressfasta0',
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
-    bld.program(source='src/nrfasta.c', target='nrfasta', use='GLIB2')
+    #bld.program(source='src/nrfasta.c', target='nrfasta', use='GLIB2')
     bld.program(source='src/samplefasta.c', target='samplefasta', use='cliutils ioutils')
 
     # MOL2 tools
@@ -35,5 +35,5 @@ def build(bld):
         bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
 
     # MCW-enabled demos
-    bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap')
+    bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap', lib='rt')
 
