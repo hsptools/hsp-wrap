@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <sys/signalfd.h>
 #include <sys/select.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -68,6 +69,13 @@ volatile int Rank;
 // Use by both master and slave for timing
 float init_time;
 
+// Pipes back to forker (parent) process
+struct pipe_fds {
+  int fds[2];
+};
+
+struct pipe_fds *psmgr_cmd_pipes;
+struct pipe_fds *psmgr_stat_pipes;
 
 // !!av: Gating hack
 char  **Cbuff;
@@ -855,11 +863,15 @@ static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid,
   nodes      = procs;
   loadstride = nodes/args.ndbs;
 
-  fprintf(stderr, "%d.%d: Pretending to run job\n", rank, wid);
-  // TODO: Worker_WriteResults
-  sleep(1);
-  fprintf(stderr, "%d.%d: Done pretending\n", rank, wid);
+  printf("Requesting fork for wid %d\n", wid);
 
+  char op = 'F';
+  write(psmgr_cmd_pipes[wid].fds[1], &op, sizeof(char));
+
+  // Now wait for completion
+  int st;
+  read(psmgr_stat_pipes[wid].fds[0], &st, sizeof(int));
+  printf("%d.%d Process returned: %d !!!!!!!!!!!!!!!!!\n", rank, wid, st);
 
 #if 0
   // Lock until child process signals us with SIGUSR1
@@ -2587,27 +2599,142 @@ int mpi_main(int argc, char **argv)
 
 int psmgr_main(int argc, char **argv, int mpi_pid)
 {
-  int st;
+  int                     sig_fd;
+  sigset_t                sig_mask;
+  struct signalfd_siginfo sig_info;
 
-  fprintf(stderr, "Waiting for MPI process (%d) to die...\n", mpi_pid);
-  do {
-    waitpid(mpi_pid, &st, 0);
-  } while(!WIFEXITED(st));
+  int            st, i, nfds;
+  size_t         sz;
+  fd_set         rfds;
+  pid_t          pids[MCW_NCORES];
+  struct timeval tv;
 
-  fprintf(stderr, "MPI process (%d) has exited. Goodbye.\n", mpi_pid);
-  return WEXITSTATUS(st);
+  // Block standard SIGCHLD disposition
+  sigemptyset(&sig_mask);
+  sigaddset(&sig_mask, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &sig_mask, NULL) == -1) {
+    // ERROR
+  }
+
+  // Get file-descriptor for handling SIGCHLD
+  sig_fd = signalfd(-1, &sig_mask, 0);
+  if (sig_fd == -1) {
+    // ERROR
+  }
+
+  for (i=0; i<MCW_NCORES; ++i) {
+    pids[i] = 0;
+  }
+
+  fprintf(stderr, "Waiting for fork requests...\n");
+
+  while (1) {
+    // We want to listen for SIGCHLD and on incoming commands
+    FD_ZERO(&rfds);
+    FD_SET(sig_fd, &rfds);
+    nfds = sig_fd;
+    for (i=0; i<MCW_NCORES; ++i) {
+      FD_SET(psmgr_cmd_pipes[i].fds[0], &rfds);
+      if (psmgr_cmd_pipes[i].fds[0] > nfds) {
+	nfds = psmgr_cmd_pipes[i].fds[0];
+      }
+    }
+    nfds++;
+
+    // Select()'s timeout
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+
+    st = select(nfds, &rfds, NULL, NULL, &tv);
+    if (st == -1) {
+      perror("select()");
+    } else if (st) {
+      if (FD_ISSET(sig_fd, &rfds)) {
+	sz = read(sig_fd, &sig_info, sizeof(struct signalfd_siginfo));
+	if (sz != sizeof(struct signalfd_siginfo)) {
+	  // ERROR
+	}
+	if (sig_info.ssi_signo != SIGCHLD) {
+	  // ERROR
+	}
+	waitpid(sig_info.ssi_pid, &st, 0);
+
+	if (sig_info.ssi_pid == mpi_pid) {
+	  if (WIFEXITED(st)) {
+	    // MPI is dead, we should die too...
+	    fprintf(stderr, "MPI process (%d) has exited. Goodbye.\n", mpi_pid);
+	    return WEXITSTATUS(st);
+	  }
+	} else {
+	  if (WIFEXITED(st)) {
+	    // A child (job) has died
+	    fprintf(stderr, "A Child job has exited.\n");
+	  }
+	}
+      }
+      for (i=0; i<MCW_NCORES; ++i) {
+	if (FD_ISSET(psmgr_cmd_pipes[i].fds[0], &rfds)) {
+	  int foo;
+	  read(psmgr_cmd_pipes[i].fds[0], &foo, sizeof(int));
+
+	  // We got a command!
+	  fprintf(stderr, "Worker %d is requesting a fork.\n", i);
+	  pids[i] = 100;
+	}
+      }
+    } else {
+      printf("No data within 1 seconds.\n");
+      // Silly pretend that we ran something
+      for (i=0; i<MCW_NCORES; ++i) {
+	if (pids[i] != 0) {
+	  pids[i] = 0;
+	  st = 1337;
+	  write(psmgr_stat_pipes[i].fds[1], &st, sizeof(int));
+	}
+      }
+    }
+  } // event loop
+
+  return EXIT_FAILURE;
 }
 
 int main(int argc, char **argv)
 {
-  int mpi_pid;
+  int mpi_pid, tmp_pid, forker_pid, i;
 
-  if( (mpi_pid=fork()) > 0 ) {
-    return psmgr_main(argc, argv, mpi_pid);
-  } else if( !mpi_pid ) {
+  psmgr_cmd_pipes  = malloc(MCW_NCORES * sizeof(struct pipe_fds));
+  psmgr_stat_pipes = malloc(MCW_NCORES * sizeof(struct pipe_fds));
+  for (i = 0; i < MCW_NCORES; ++i) {
+    if (pipe(psmgr_cmd_pipes[i].fds) == -1) {
+      Vprint(SEV_ERROR,"Could not open pipe for forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+    if (pipe(psmgr_stat_pipes[i].fds) == -1) {
+      Vprint(SEV_ERROR,"Could not open pipe for forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  mpi_pid = getpid();
+
+  if ((tmp_pid = fork()) > 0) {
+    // parent process
     return mpi_main(argc, argv);
+  } else if (!tmp_pid) {
+    // temporary process
+    if ((forker_pid = fork()) > 0) {
+      // still in temporary process, kill it
+      kill(SIGKILL, getpid());
+    } else if (!forker_pid) {
+      // forker process
+      return psmgr_main(argc, argv, mpi_pid);
+    } else {
+      Vprint(SEV_ERROR,"Could not fork forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
   } else {
-    Vprint(SEV_ERROR,"Could not fork main MPI process.  Terminating.\n");
+    Vprint(SEV_ERROR,"Could not fork temporary process.  Terminating.\n");
+    exit(EXIT_FAILURE);
   }
 }
 
