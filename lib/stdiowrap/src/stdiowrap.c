@@ -117,7 +117,7 @@ static void init_SHM()
   if( !file_sizes ) {
     char  shmname[256];
 
-    snprintf(shmname, 256, "/mcw.%d.%s", getppid(), "file_sizes");
+    snprintf(shmname, 256, "/mcw.%s.%s", getenv("MCW_PID"), "file_sizes");
     fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
     
     /*
@@ -164,7 +164,7 @@ static int fill_WFILE_data_SHM(WFILE *wf)
     if( !strcmp(file_sizes->fs[i].name,wf->name) ) {
       char  shmname[256];
 
-      snprintf(shmname, 256, "/mcw.%d.%d", getppid(), i);
+      snprintf(shmname, 256, "/mcw.%s.%d", getenv("MCW_PID"), i);
       int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
       
       // Attach the shared memory segment

@@ -27,7 +27,5 @@ main(int argc, char **argv)
   stdiowrap_fclose(outf);
 
   sleep(1);
-
-  fprintf(stderr, "Wrote %d lines\n. Done.", i);
   return EXIT_SUCCESS;
 }

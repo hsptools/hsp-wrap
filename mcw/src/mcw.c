@@ -27,6 +27,7 @@
 #define UNUSED(param) (void)(param)
 #define MCW_BIN       "mcw"
 #define EXE_BASE      "task.bin"
+#define PATH_MAX      2048
 
 extern char **environ;
 
@@ -74,8 +75,10 @@ struct pipe_fds {
   int fds[2];
 };
 
+// Process manager 
 struct pipe_fds *psmgr_cmd_pipes;
 struct pipe_fds *psmgr_stat_pipes;
+char *rundir;
 
 // !!av: Gating hack
 char  **Cbuff;
@@ -503,7 +506,6 @@ static void Master(int processes, int rank)
   for(i=0; i<mi->nslaves; i++) {
     err = MPI_Irecv(&(mi->slaves[i].request), sizeof(request_t), MPI_BYTE, mi->slaves[i].rank, 
               TAG_REQUEST, MPI_COMM_WORLD, &(mi->mpi_req[i]) );
-    printf("MPI: Master Irecv for slave %d: %d\n", i, err);
   }
 
   // Hand out work units to requestors while there is work
@@ -553,7 +555,6 @@ static void Master(int processes, int rank)
       err = MPI_Irecv(&(mi->slaves[index].request), sizeof(request_t), MPI_BYTE,
                 mi->slaves[index].rank, TAG_REQUEST, MPI_COMM_WORLD, 
                 &(mi->mpi_req[index]));
-      printf("MPI: Master Irecv for slave %d: %d\n", index, err);
       break;
     default:
       // Unknown request type
@@ -722,12 +723,12 @@ static void Worker_WriteResults(int *rndxs, int wid, int bid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int bid, int *qndxs, int *rndxs)
+static float Worker_ChildIO(int rank, int wid, int bid, int *qndxs, int *rndxs, int status)
 {
   struct timeval  st,et;
-  int             status,w;
   float           io_time=0.0f;
 
+  /*
   // Wait for the child to finish
   if( (w=waitpid(pid,&status,0)) < 0 ) {
     // Wait failed for some reason
@@ -735,19 +736,18 @@ static float Worker_ChildIO(int rank, int pid, int wid, int bid, int *qndxs, int
     Vprint(SEV_ERROR,"Worker's wait on child failed.  Terminating.\n");
     Abort(1);
   }
+  */
   // Check child exit status
-  if( w ) {
-    if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
-      // The slave's child seemes to have finished correctly
-      Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
-	     rank,wid);		
-    } else {
-      // There was an error with the child DB process
-      Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
-      if( WIFSIGNALED(status) ) {
-	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
-      }
-    } 
+  if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
+    // The slave's child seemes to have finished correctly
+    Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
+	   rank,wid);		
+  } else {
+    // There was an error with the child DB process
+    Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
+    if( WIFSIGNALED(status) ) {
+      Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
+    }
   }
 
   // The child process is gone:  Write any results to our node's buffer.
@@ -787,7 +787,7 @@ static char **Worker_BuildArgv(int rank, int wid)
   na = 1;
 
   // Now add the args from the env var mode / line
-  m = strdup(args.mode);
+  m = strdup(getenv("MCW_S_LINE"));
   w = strtok_r(m, " \t\n", &saveptr);
   while( w ) {
     // Make room in array for another arg
@@ -852,83 +852,18 @@ static void Worker_Child_MapFDs(int rank, int wid)
 #endif
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int *qndxs, int *rndxs)
+static float Worker_SearchDB(int rank, int procs, int wid, int bid, int *qndxs, int *rndxs)
 {
-  char  name[256],exe_name[256];
-  int   pid,node,nodes,loadstride;
   float io_time=0.0f;
 
-  // These will be needed later
-  node       = rank;
-  nodes      = procs;
-  loadstride = nodes/args.ndbs;
-
-  printf("Requesting fork for wid %d\n", wid);
-
-  char op = 'F';
-  write(psmgr_cmd_pipes[wid].fds[1], &op, sizeof(char));
+  write(psmgr_cmd_pipes[wid].fds[1], rundir, strlen(rundir)+1);
 
   // Now wait for completion
   int st;
   read(psmgr_stat_pipes[wid].fds[0], &st, sizeof(int));
-  printf("%d.%d Process returned: %d !!!!!!!!!!!!!!!!!\n", rank, wid, st);
 
-#if 0
-  // Lock until child process signals us with SIGUSR1
-  fork_lock();
-
-  // Build a name for the exe
-  sprintf(exe_name,"./%s",EXE_BASE);
-
-  if( (pid=fork()) > 0 ) {
-    // This is the MPI slave process (parent)
-    Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
-    // Wait for child process to start
-    // sleep(2);
-    fork_unlock();
-    // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,bid,qndxs,rndxs);
-  } else if( !pid ) {
-    // This is the Child process
-    //PG Worker_Child_MapFDs(rank,wid);
-    
-    // Setup the environment for the child process
-    int nenv, i;
-    char **env;
-    for (nenv=0, env=environ; *env; nenv++, env++);
-    
-    // FIXME: LEAK!!
-    char **new_environ = malloc(sizeof(char*) * (nenv+4));
-    // Copy original values
-    for (i=0; i < nenv; i++) {
-      new_environ[i] = environ[i];
-    }
-    // Add our own
-    asprintf(&(new_environ[i++]), "MCW_FI_SHM_FD=%d", file_sizes_fd);
-    asprintf(&(new_environ[i++]), "MCW_DB_FULL_PATH=%s/%s%d/%s", 
-	     args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
-    asprintf(&(new_environ[i++]), "MCW_WID=%d", wid);
-    // Null terminate
-    new_environ[i] = NULL;
-
-    // Run the DB search
-    if( execve(exe_name, argv, new_environ) < 0 ) {
-      Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
-      perror(MCW_BIN);
-      // FIXME: is this the child process? We should kill(getppid(),...)
-      fork_unlock();
-    }
-    // FIXME: Is this code unreachable?
-    Vprint(SEV_ERROR,"Worker's child failed to exec DB! (unreachable?)\n");
-    perror(MCW_BIN);
-    Abort(0);
-  } else {
-    // fork() returned an error code
-    Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
-    perror(MCW_BIN);
-    fork_unlock();
-  }
-#endif
+  // Handle Output
+  io_time = Worker_ChildIO(rank,wid,bid,qndxs,rndxs,st);
 
   // Return the time it took to do IO.
   return io_time;
@@ -1052,7 +987,6 @@ static void* Worker(void *arg)
   int             f,q[args.nq_files],r[SlaveInfo.nout_files],done=0;
   long            ib,idb;
   char            name[256];
-  char          **argv;
 
   // Find the in/out SHMs for this worker
   // Inputs
@@ -1071,9 +1005,6 @@ static void* Worker(void *arg)
       Abort(1);
     }
   }
-
-  // Arguments for execv
-  argv = Worker_BuildArgv(si->rank,wid);
 
   // Done with init, start processing loop
   while( !done ) {
@@ -1157,7 +1088,7 @@ static void* Worker(void *arg)
         return NULL;
       }
 
-      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, argv, workunit->blk_id, q, r);
+      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, workunit->blk_id, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
@@ -1790,7 +1721,6 @@ static void Slave(int processes, int rank)
     request->count = MCW_NCORES-qd;
     err = MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
              TAG_REQUEST, MPI_COMM_WORLD);
-    printf("MPI: Slave with rank %d sent request: %d\n", SlaveInfo.rank, err);
     tscq_entry_free(si->rq,request);
 
     // Read the work unit from master
@@ -2306,6 +2236,7 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
       Vprint(SEV_ERROR,"Slave failed to chdir to work directory. Terminating.\n");
       Abort(1);
     }
+    rundir=strdup(fn);
   }
 
   // Record our hostname and rank
@@ -2603,11 +2534,16 @@ int psmgr_main(int argc, char **argv, int mpi_pid)
   sigset_t                sig_mask;
   struct signalfd_siginfo sig_info;
 
-  int            st, i, nfds;
+  int            st, i, j, nfds;
   size_t         sz;
+  char           exe_name[sizeof(EXE_BASE)+4];
+  char         **new_argv;
   fd_set         rfds;
   pid_t          pids[MCW_NCORES];
   struct timeval tv;
+
+  char old_rundir[PATH_MAX];
+  old_rundir[0] = '\0';
 
   // Block standard SIGCHLD disposition
   sigemptyset(&sig_mask);
@@ -2626,7 +2562,28 @@ int psmgr_main(int argc, char **argv, int mpi_pid)
     pids[i] = 0;
   }
 
-  fprintf(stderr, "Waiting for fork requests...\n");
+  // Setup the environment for the child process
+  int nenv;
+  char **env;
+  for (nenv=0, env=environ; *env; nenv++, env++);
+  
+  // Copy original values
+  char **new_environ = malloc(sizeof(char*) * (nenv+3));
+  for (i=0, j=2; i < nenv; i++, j++) {
+    new_environ[j] = environ[i];
+  }
+  // Our values
+  new_environ[0] = "MCW_WID=0";
+  asprintf(&(new_environ[1]), "MCW_PID=%d", mpi_pid);
+  // Null terminate
+  new_environ[j] = NULL;
+  
+  // Prepare exe name for exec
+  sprintf(exe_name, "./%s", EXE_BASE);
+
+  // Finally, prepare argv for exec
+  new_argv = Worker_BuildArgv(0, 0);
+
 
   while (1) {
     // We want to listen for SIGCHLD and on incoming commands
@@ -2642,7 +2599,7 @@ int psmgr_main(int argc, char **argv, int mpi_pid)
     nfds++;
 
     // Select()'s timeout
-    tv.tv_sec = 1;
+    tv.tv_sec = 5;
     tv.tv_usec = 0;
 
     st = select(nfds, &rfds, NULL, NULL, &tv);
@@ -2657,41 +2614,76 @@ int psmgr_main(int argc, char **argv, int mpi_pid)
 	if (sig_info.ssi_signo != SIGCHLD) {
 	  // ERROR
 	}
-	waitpid(sig_info.ssi_pid, &st, 0);
-
-	if (sig_info.ssi_pid == mpi_pid) {
-	  if (WIFEXITED(st)) {
-	    // MPI is dead, we should die too...
-	    fprintf(stderr, "MPI process (%d) has exited. Goodbye.\n", mpi_pid);
-	    return WEXITSTATUS(st);
+	// We must loop, since multiple SIGCHLDs could be bundled into this signalfd read
+	while (1) {
+	  // Get next SIGCHLD signal
+ 	  int pid = waitpid(-1, &st, 0);
+	  if (pid <= 0) {
+	    break;
 	  }
-	} else {
-	  if (WIFEXITED(st)) {
-	    // A child (job) has died
-	    fprintf(stderr, "A Child job has exited.\n");
+
+	  if (pid == mpi_pid) {
+	    if (WIFEXITED(st)) {
+	      // MPI is dead, we should die too...
+	      fprintf(stderr, "MPI process (%d) has exited. Goodbye!!!!!!!!!!!!!!!!!!!!!!!!!1\n", mpi_pid);
+	      return WEXITSTATUS(st);
+	    }
+	  } else {
+	    if (WIFEXITED(st)) {
+	      // A child (job) has died
+	      for (i=0; i<MCW_NCORES; ++i) {
+		if (pids[i] == pid) {
+		  // Found the worker who requested this job
+		  pids[i] = 0;
+		  write(psmgr_stat_pipes[i].fds[1], &st, sizeof(int));
+		  break;
+		}
+	      }
+	      if (i==MCW_NCORES) {
+		fprintf(stderr, "An unrecognized processs (%d) has exited. Goodbye!!!!!!!!!!!!!!!!!!!!!!!!!1\n", pid);
+	      }
+	    }
 	  }
 	}
       }
+
+      // Check each of the worker pipes for commands
       for (i=0; i<MCW_NCORES; ++i) {
 	if (FD_ISSET(psmgr_cmd_pipes[i].fds[0], &rfds)) {
-	  int foo;
-	  read(psmgr_cmd_pipes[i].fds[0], &foo, sizeof(int));
+	  char rundir[PATH_MAX];
+	  read(psmgr_cmd_pipes[i].fds[0], &rundir, PATH_MAX);
 
-	  // We got a command!
-	  fprintf(stderr, "Worker %d is requesting a fork.\n", i);
-	  pids[i] = 100;
+	  // Change into our work directory
+	  // FIXME: Silly way to do this, would be better to get this info on init
+	  if (strcmp(rundir, old_rundir)) {
+	    if( chdir(rundir) < 0 ) {
+	      Vprint(SEV_ERROR,"Forker failed to chdir to work directory. Terminating.\n");
+	      Abort(1);
+	    }
+	    strcpy(old_rundir, rundir);
+	  }
+
+	  if( (pids[i]=fork()) > 0 ) {
+	    // This is the forker process (parent)
+	    Vprint(SEV_DEBUG, "Slave ? Worker %d's child's pid: %d.\n", i, pids[i]);
+	  } else if( !pids[i] ) {
+	    // This is the child process
+	    asprintf(&(new_environ[0]), "MCW_WID=%d", i);
+	    
+	    // Run the DB search
+	    if( execve(exe_name, new_argv, new_environ) < 0 ) {
+	      Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
+	      perror(MCW_BIN);
+	    }
+	  } else {
+	    // Fork failed
+	    Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
+	    perror(MCW_BIN);
+	  }
 	}
       }
     } else {
-      printf("No data within 1 seconds.\n");
-      // Silly pretend that we ran something
-      for (i=0; i<MCW_NCORES; ++i) {
-	if (pids[i] != 0) {
-	  pids[i] = 0;
-	  st = 1337;
-	  write(psmgr_stat_pipes[i].fds[1], &st, sizeof(int));
-	}
-      }
+      printf("No data within 5 seconds.\n");
     }
   } // event loop
 
@@ -2702,6 +2694,7 @@ int main(int argc, char **argv)
 {
   int mpi_pid, tmp_pid, forker_pid, i;
 
+  // Initialize Process manager IPC
   psmgr_cmd_pipes  = malloc(MCW_NCORES * sizeof(struct pipe_fds));
   psmgr_stat_pipes = malloc(MCW_NCORES * sizeof(struct pipe_fds));
   for (i = 0; i < MCW_NCORES; ++i) {
@@ -2721,6 +2714,7 @@ int main(int argc, char **argv)
     // parent process
     return mpi_main(argc, argv);
   } else if (!tmp_pid) {
+    /*
     // temporary process
     if ((forker_pid = fork()) > 0) {
       // still in temporary process, kill it
@@ -2732,10 +2726,14 @@ int main(int argc, char **argv)
       Vprint(SEV_ERROR,"Could not fork forker process.  Terminating.\n");
       exit(EXIT_FAILURE);
     }
+    */
+    // forker process
+    return psmgr_main(argc, argv, mpi_pid);
   } else {
     Vprint(SEV_ERROR,"Could not fork temporary process.  Terminating.\n");
     exit(EXIT_FAILURE);
   }
+  exit(EXIT_FAILURE);
 }
 
 // vim: ts=8:sts=2:sw=2
