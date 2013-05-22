@@ -15,11 +15,5 @@ def build(bld):
 
     for t in tests:
         bld.program(source='{0}.c'.format(t), target=t,
-                    use='stdiowrap')
+                    use='stdiowrap', lib='rt')
 
-    tests = [
-        'test-fgets-std',
-    ]
-
-    for t in tests:
-        bld.program(source='{0}.c'.format(t), target=t)

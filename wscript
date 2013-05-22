@@ -83,6 +83,9 @@ def configure(conf):
             args='--cflags --libs', uselib_store='YAML',
             mandatory=True)
 
+    #conf.check_cfg(package='glib-2.0', atleast_version='2.16',
+    #        args='--cflags --libs', uselib_store='GLIB2', mandatory=True)
+
     # zlib
     try:
         conf.check_cfg(package='zlib', atleast_version='1.2.3',

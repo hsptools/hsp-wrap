@@ -15,7 +15,7 @@ int main (int argc, char **argv) {
 '''
 
 def find_mpi_cc(conf):
-	cc=conf.find_program(['mpicc','cc'],var='MPI_CC')
+	cc=conf.find_program(['mpiicc','mpicc','cc'],var='MPI_CC')
 	cc=conf.cmd_to_list(cc)
 	
 	# Verify actual MPI implementation
@@ -42,6 +42,11 @@ def find_mpi_cc(conf):
 	conf.env.LINKFLAGS_cxxstlib = []
 	conf.env.SHLIB_MARKER = []
 	conf.env.STLIB_MARKER = []
+
+	# MT sucks on Intel
+	if str(cc).endswith('mpiicc'):
+		conf.env.append_unique('CFLAGS', ['-mt_mpi'])
+		conf.env.append_unique('LDFLAGS', ['-mt_mpi'])
 
 	# done with MPI-Specific ConfigSet
 	conf.setenv('')

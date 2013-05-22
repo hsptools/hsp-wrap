@@ -29,8 +29,10 @@ int max_bound_opt = INT_MAX;
 char *input_opt   = 0;
 // Output filename
 char *output_opt  = 0;
+// Other filename
+char *other_opt  = 0;
 // Force overwrite
-int force_flag    = 1;
+int force_flag    = 0;
 
 // Name of program (samplefasta)
 static char *program_name;
@@ -47,12 +49,14 @@ Sequences are sampled with uniform distribution across the input file.\n\
 There is also support to restrict the length of samples which are sequenced.\n\
 Any sequences which exceed this limit are not considered while sampling.\n\n\
 Options:\n\
-  -s, --samples=SAMPLES  the number of samples to select\n\
-  -m, --min-length=AAS   the minimum sequence length to accept\n\
-  -M, --max-length=AAS   the maximum sequence length to accept\n\
-  -o, --output=FILE      write to output file instead of standard output\n\
-      --help             display this help and exit\n\
-      --version          display version information and exit\n\n\
+  -f, --force             forcibly overwrite output file if it already exists\n\
+  -s, --samples=SAMPLES   the number of samples to select\n\
+  -m, --min-length=AAS    the minimum sequence length to accept\n\
+  -M, --max-length=AAS    the maximum sequence length to accept\n\
+  -o, --output=FILE       write to output file instead of standard output\n\
+  -O, --other-output=FILE write to output file instead of standard output\n\
+      --help              display this help and exit\n\
+      --version           display version information and exit\n\n\
 Report bugs to <brekapal@utk.edu>\
 ");
 }
@@ -92,7 +96,7 @@ parse_int (char *str, char *name)
 int
 main (int argc, char **argv)
 {
-  FILE     *in, *out;
+  FILE          *in, *out, *other_out;
 
   int            c, printing;
   unsigned int   naa, nbytes;
@@ -111,6 +115,8 @@ main (int argc, char **argv)
       {"min-length",    required_argument, 0, 'm'},
       {"max-length",    required_argument, 0, 'M'},
       {"output",        required_argument, 0, 'o'},
+      {"other-output",  required_argument, 0, 'O'},
+      {"force",         no_argument,       0, 'f'},
       {"help",          no_argument,       0, '#'},
       {"version",       no_argument,       0, '^'},
       {0, 0, 0, 0}
@@ -118,7 +124,7 @@ main (int argc, char **argv)
 
     int option_index = 0;
 
-    c = getopt_long(argc, argv, "s:m:M:o:",
+    c = getopt_long(argc, argv, "s:m:M:o:O:f",
 	long_options, &option_index);
 
     // Detect the end of the options.
@@ -141,6 +147,14 @@ main (int argc, char **argv)
 
       case 'o':
 	output_opt = optarg;
+	break;
+
+      case 'O':
+	other_opt = optarg;
+	break;
+
+      case 'f':
+	force_flag = 1;
 	break;
 
       case '?':
@@ -179,10 +193,27 @@ main (int argc, char **argv)
   }
 
   // Open output file (or stdout)
-  if (output_opt) {
+  if (output_opt && strcmp(output_opt, "-")) {
     out = fdopen(ioutil_open_w(output_opt, force_flag, 0), "w");
   } else {
     out = stdout;
+  }
+
+  // Open other output file (or stdout)
+  if (other_opt) {
+    if (strcmp(other_opt, "-")) {
+      other_out = fdopen(ioutil_open_w(other_opt, force_flag, 0), "w");
+    } else {
+      other_out = stdout;
+    }
+  } else {
+    other_out = NULL;
+  }
+
+  // Don't allow writing to the same file for 'out' and 'other'
+  if (out == other_out) {
+    fprintf(stderr, "samplefasta: output and other-output must reference different files.\n");
+    exit(EXIT_FAILURE);
   }
 
   // Initial skip_list buffer
@@ -265,6 +296,8 @@ main (int argc, char **argv)
 
     if (printing) {
       fputc(ch, out);
+    } else if (other_out) {
+      fputc(ch, other_out);
     }
 
     lastch = ch;

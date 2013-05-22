@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <glib.h>
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //                              Types and Defines                             //
@@ -19,8 +21,6 @@ typedef struct st_info {
   char       *queries;      // Pointer to start of input queries
   char       *cquery;       // Current input query
   char       *equery;       // One byte past last valid byte of query
-  char      **sequences;    // Array of sorted (at some point) inputs
-  int         nsequences;   // Number of known sequences
 } info_t;
 
 
@@ -105,19 +105,14 @@ int main(int argc, char **argv)
   int     i,j,splits;
   size_t  sz,fs;
   FILE   *f;
+  GHashTable *gis = g_hash_table_new(g_str_hash, g_str_equal);
 
   // Clear the info struct
   memset(&nfo,0,sizeof(info_t));
 
   // Check command line args
-  if( argc != 3 ) {
-    fprintf(stderr,"Bad command line; expecting query file and split count. Terminating.\n");
-    exit(1);
-  }
-
-  // Get split count
-  if( sscanf(argv[2],"%d",&splits) != 1 ) {
-    fprintf(stderr,"Bad command line; could not parse split count. Terminating.\n");
+  if( argc != 2 ) {
+    fprintf(stderr,"Bad command line; expecting query file. Terminating.\n");
     exit(1);
   }
 
@@ -137,36 +132,26 @@ int main(int argc, char **argv)
   }
 
   
-  // Get a block of sequences to put in output file
-  for(i=0,sz=0,seq=NULL; !i || seq; i++) {
+  // Loop over sequences
+  while((seq=Get_Sequence())) {
+    char *gi_beg, *gi_end;
+    char *gi;
 
-    // Get a block
-    for(; (sz < ((i+1)*fs/splits)) && (seq=Get_Sequence()); sz+=Sequence_Length(seq)) {
-      nfo.nsequences++;
-      if( !(nfo.sequences = realloc(nfo.sequences,nfo.nsequences*sizeof(char*))) ) {
-	fprintf(stderr,"Could not grow sequence pointer array. Terminating.\n");
-	exit(1);
-      }
-      nfo.sequences[nfo.nsequences-1] = seq;
-    }
-    
-    // Write the block to the file
-    sprintf(fn,"q%d.fasta",i);
-    if( !(f=fopen(fn,"w")) ) {
-      // Error
-    }
-    for(j=0; j<nfo.nsequences; j++) {
-      for(p=nfo.sequences[j]; (p<nfo.equery) && ( (p == nfo.sequences[j]) || (*p != '>') ); p++) {
-	fprintf(f,"%c",*p);
-      }
-    }
-    fclose(f);
+    int i;
 
-    // Get ready for the next block
-    nfo.nsequences = 0;
-    free(nfo.sequences);
-    nfo.sequences = NULL;
+    gi_beg = strchr(seq,    '|') + 1;
+    gi_end = strchr(gi_beg, '|');
+    gi = strndup(gi_beg, gi_end-gi_beg);
+
+    // Report error, or output sequence and remember it
+    if (g_hash_table_lookup_extended(gis, gi, NULL, NULL)) {
+      fprintf(stderr, "Duplicate found with gid=%s.  Rejecting.\n", gi);
+    } else {
+      g_hash_table_replace(gis, gi, gi);
+      fwrite(seq, 1, Sequence_Length(seq), stdout);
+    }
   }
 
+  g_hash_table_destroy(gis);
   return 0;
 }

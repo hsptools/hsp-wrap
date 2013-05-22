@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <sys/signalfd.h>
 #include <sys/select.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -25,6 +26,10 @@
 
 #define UNUSED(param) (void)(param)
 #define MCW_BIN       "mcw"
+#define EXE_BASE      "task.bin"
+#define PATH_MAX      2048
+
+extern char **environ;
 
 ////////////////////////////////////////////////////////////////////////////////
 //                               Global State                                 //
@@ -53,6 +58,7 @@ volatile int  result_thread_error=0;
 // file_sizes[0] is the exe file
 filesizes_t *file_sizes;
 int          file_sizes_fd;
+int          file_is_shm[MAX_DB_FILES];
 void        *shm_exe;
 long         shm_exe_sz;
 
@@ -64,6 +70,15 @@ volatile int Rank;
 // Use by both master and slave for timing
 float init_time;
 
+// Pipes back to forker (parent) process
+struct pipe_fds {
+  int fds[2];
+};
+
+// Process manager 
+struct pipe_fds *psmgr_cmd_pipes;
+struct pipe_fds *psmgr_stat_pipes;
+char *rundir;
 
 // !!av: Gating hack
 char  **Cbuff;
@@ -184,30 +199,40 @@ static void Report_Timings(int rank,
 //                 Helpers for bad fork/free implementations                  //
 ////////////////////////////////////////////////////////////////////////////////
 
+#if 0
+#define fork_init_lock() pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL)
+#define fork_lock()      pthread_mutex_lock(&(SlaveInfo.fork_lock))
+#define fork_unlock()    pthread_mutex_unlock(&(SlaveInfo.fork_lock))
+#else
+#define fork_init_lock()
+#define fork_lock()
+#define fork_unlock()
+#endif
+
 static int safe_inflateEnd(z_stream *strm)
 {
   int ret;
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   ret = inflateEnd(strm);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
   return ret;
 }
 
 
 static void safe_free(void *p)
 {
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   free(p);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
 }
   
 
 static void* safe_malloc(size_t sz)
 {
   void *p;
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  fork_lock();
   p = malloc(sz);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
   return p;
 }
   
@@ -236,22 +261,31 @@ static void Abort(int arg)
 ////////////////////////////////////////////////////////////////////////////////
 
 
-static void* Create_SHM(long shmsz, int *fd)
+static void* Create_SHM(char *name, long shmsz, int *fd)
 {
   void *shm;
   int   shmfd;
+  char  shmname[256];
+
+  snprintf(shmname, 256, "/mcw.%d.%s", getpid(), name);
 
   // Create the shared memory segment, and then mark for removal.
   // As soon as all attachments are gone, the segment will be
   // destroyed by the OS.
-  shmfd = shmget(IPC_PRIVATE, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  shmfd = shm_open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
   if( shmfd < 0 ) {
-    Vprint(SEV_ERROR,"Failed to make SHM (%d).  Terminating.\n",errno);
+    Vprint(SEV_ERROR,"Failed to make SHM of size %ld: %s. Terminating.\n",shmsz,strerror(errno));
     Abort(1);
   }
-  shm = shmat(shmfd, NULL, 0);
-  shmctl(shmfd, IPC_RMID, NULL);
-  if( shm == ((void*)-1) ) {
+  if ((ftruncate(shmfd, shmsz)) != 0) {
+    Vprint(SEV_ERROR,"Failed to resize SHM (%d).  Terminating.\n",errno);
+    Abort(1);
+  }
+  shm = mmap(NULL, shmsz, PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
+
+  if( shm == MAP_FAILED) {
     Vprint(SEV_ERROR,"Failed to attach SHM. Terminating.\n");
     Abort(1);
   }
@@ -268,9 +302,12 @@ static void* Create_DBSHM(char *name, long shmsz)
 {
   int    fd;
   void  *shm;
+  char  shmname[10];
+
+  snprintf(shmname, 10, "%d", file_sizes->nfiles);
 
   // Create the shared memory segment
-  shm = Create_SHM(shmsz,&fd);  
+  shm = Create_SHM(shmname, shmsz, &fd);  
 
   // Save some info about the SHM
   if( file_sizes->nfiles < MAX_DB_FILES ) {
@@ -278,6 +315,7 @@ static void* Create_DBSHM(char *name, long shmsz)
     file_sizes->fs[file_sizes->nfiles].shmsize = shmsz;
     file_sizes->fs[file_sizes->nfiles].size    = shmsz;
     file_sizes->fs[file_sizes->nfiles].fd      = fd;
+    file_is_shm[file_sizes->nfiles]            = 1;
     sprintf(file_sizes->fs[file_sizes->nfiles].name,"%s",name);
     file_sizes->nfiles++;
   } else {
@@ -440,6 +478,7 @@ static void Master(int processes, int rank)
   masterinfo_t *mi=&MasterInfo; // Just to shorten
   seq_data_t    sequence;
   int           nseq,seqsz,blkseqs,index,i,fp,max_req;
+  int           err;
   double        pd,lpd;
   long          st;
 
@@ -452,7 +491,7 @@ static void Master(int processes, int rank)
   mi->nslaves = processes-1;
   Vprint(SEV_NRML,"Slaves:   %d\t(processes)\n",mi->nslaves);
   Vprint(SEV_NRML,"Workers:  %d\t(threads)\n\n",mi->nslaves*MCW_NCORES);
-  Init_Master(&mi);
+  Init_Master();
 
 	max_req = ceil((float)mi->nqueries/(mi->nslaves*MCW_NCORES));
 
@@ -465,7 +504,7 @@ static void Master(int processes, int rank)
 
   // Post a receive work request from each slave
   for(i=0; i<mi->nslaves; i++) {
-    MPI_Irecv(&(mi->slaves[i].request), sizeof(request_t), MPI_BYTE, mi->slaves[i].rank, 
+    err = MPI_Irecv(&(mi->slaves[i].request), sizeof(request_t), MPI_BYTE, mi->slaves[i].rank, 
               TAG_REQUEST, MPI_COMM_WORLD, &(mi->mpi_req[i]) );
   }
 
@@ -513,7 +552,7 @@ static void Master(int processes, int rank)
       // Record that a send is in flight to this slave
       mi->slaves[index].sflg = 1;
       // And post a receive for another work unit request from this slave
-      MPI_Irecv(&(mi->slaves[index].request), sizeof(request_t), MPI_BYTE,
+      err = MPI_Irecv(&(mi->slaves[index].request), sizeof(request_t), MPI_BYTE,
                 mi->slaves[index].rank, TAG_REQUEST, MPI_COMM_WORLD, 
                 &(mi->mpi_req[index]));
       break;
@@ -684,12 +723,12 @@ static void Worker_WriteResults(int *rndxs, int wid, int bid)
 }
 
 
-static float Worker_ChildIO(int rank, int pid, int wid, int bid, int *qndxs, int *rndxs)
+static float Worker_ChildIO(int rank, int wid, int bid, int *qndxs, int *rndxs, int status)
 {
   struct timeval  st,et;
-  int             status,w;
   float           io_time=0.0f;
 
+  /*
   // Wait for the child to finish
   if( (w=waitpid(pid,&status,0)) < 0 ) {
     // Wait failed for some reason
@@ -697,19 +736,18 @@ static float Worker_ChildIO(int rank, int pid, int wid, int bid, int *qndxs, int
     Vprint(SEV_ERROR,"Worker's wait on child failed.  Terminating.\n");
     Abort(1);
   }
+  */
   // Check child exit status
-  if( w ) {
-    if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
-      // The slave's child seemes to have finished correctly
-      Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
-	     rank,wid);		
-    } else {
-      // There was an error with the child DB process
-      Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
-      if( WIFSIGNALED(status) ) {
-	Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
-      }
-    } 
+  if( WIFEXITED(status) && !WEXITSTATUS(status) ) {
+    // The slave's child seemes to have finished correctly
+    Vprint(SEV_DEBUG,"Slave %d Worker %d Child exited normally.\n",
+	   rank,wid);		
+  } else {
+    // There was an error with the child DB process
+    Vprint(SEV_ERROR,"Worker's child exited abnormally: %d.\n",WEXITSTATUS(status));
+    if( WIFSIGNALED(status) ) {
+      Vprint(SEV_ERROR,"Worker's child killed by signal: %d.\n",WTERMSIG(status));
+    }
   }
 
   // The child process is gone:  Write any results to our node's buffer.
@@ -745,11 +783,11 @@ static char **Worker_BuildArgv(int rank, int wid)
     Vprint(SEV_ERROR, "Slave %d Worker %d Failed to create child's argv list.\n",rank,wid);
     Abort(1);
   }
-  argv[0] = strdup(args.exe_base);
+  argv[0] = strdup(EXE_BASE);
   na = 1;
 
   // Now add the args from the env var mode / line
-  m = strdup(args.mode);
+  m = strdup(getenv("MCW_S_LINE"));
   w = strtok_r(m, " \t\n", &saveptr);
   while( w ) {
     // Make room in array for another arg
@@ -814,61 +852,18 @@ static void Worker_Child_MapFDs(int rank, int wid)
 #endif
 
 
-static float Worker_SearchDB(int rank, int procs, int wid, char **argv, int bid, int *qndxs, int *rndxs)
+static float Worker_SearchDB(int rank, int procs, int wid, int bid, int *qndxs, int *rndxs)
 {
-  char  name[256],exe_name[256];
-  int   pid,node,nodes,loadstride;
   float io_time=0.0f;
 
-  // These will be needed later
-  node       = rank;
-  nodes      = procs;
-  loadstride = nodes/args.ndbs;
+  write(psmgr_cmd_pipes[wid].fds[1], rundir, strlen(rundir)+1);
 
-  // Lock until child process signals us with SIGUSR1
-  pthread_mutex_lock(&(SlaveInfo.fork_lock));
+  // Now wait for completion
+  int st;
+  read(psmgr_stat_pipes[wid].fds[0], &st, sizeof(int));
 
-  // Setup the environment for the child process
-  sprintf(name,"%d",file_sizes_fd);
-  setenv("MCW_FI_SHM_FD",name,1);
-  sprintf(name,"%s/%s%d/%s",
-          args.db_path,args.db_prefix,node/loadstride,args.db_prefix);
-  setenv("MCW_DB_FULL_PATH",name,1);
-  sprintf(name,"%d",wid);
-  setenv("MCW_WID",name,1);
-
-  // Build a name for the exe
-  sprintf(exe_name,"./%s",args.exe_base);
-
-  if( (pid=fork()) > 0 ) {
-    // This is the MPI slave process (parent)
-    Vprint(SEV_DEBUG, "Slave %d Worker %d's child's pid: %d.\n",SlaveInfo.rank,wid,pid);
-    // Wait for child process to start
-    sleep(2);
-    sigusr_forkunlock(0);
-    // Wait for child to finish; handle its IO
-    io_time = Worker_ChildIO(rank,pid,wid,bid,qndxs,rndxs);
-  } else if( !pid ) {
-    // This is the Child process
-    //PG Worker_Child_MapFDs(rank,wid);
-
-    // Run the DB search
-    if( execv(exe_name,argv) < 0 ) {
-      Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
-      perror(MCW_BIN);
-      // FIXME: is this the child process? We should kill(getppid(),...)
-      sigusr_forkunlock(0);
-    }
-    // FIXME: Is this code unreachable?
-    Vprint(SEV_ERROR,"Worker's child failed to exec DB! (unreachable?)\n");
-    perror(MCW_BIN);
-    Abort(0);
-  } else {
-    // fork() returned an error code
-    Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
-    perror(MCW_BIN);
-    sigusr_forkunlock(0);
-  }
+  // Handle Output
+  io_time = Worker_ChildIO(rank,wid,bid,qndxs,rndxs,st);
 
   // Return the time it took to do IO.
   return io_time;
@@ -992,7 +987,6 @@ static void* Worker(void *arg)
   int             f,q[args.nq_files],r[SlaveInfo.nout_files],done=0;
   long            ib,idb;
   char            name[256];
-  char          **argv;
 
   // Find the in/out SHMs for this worker
   // Inputs
@@ -1011,9 +1005,6 @@ static void* Worker(void *arg)
       Abort(1);
     }
   }
-
-  // Arguments for execv
-  argv = Worker_BuildArgv(si->rank,wid);
 
   // Done with init, start processing loop
   while( !done ) {
@@ -1097,7 +1088,7 @@ static void* Worker(void *arg)
         return NULL;
       }
 
-      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, argv, workunit->blk_id, q, r);
+      t_vo = Worker_SearchDB(si->rank, si->nprocs, wid, workunit->blk_id, q, r);
       // The producer of the work unit malloced this, so we need to free it.
       safe_free(workunit->data);
       gettimeofday(&tv, NULL);
@@ -1340,11 +1331,11 @@ void* ResultWriter(void *arg)
     }
 
     // Setup/Open output file 
-    if( !(f[i]=open(SlaveInfo.out_files[i], 
+    if( (f[i]=open(SlaveInfo.out_files[i], 
                     O_CREAT | O_EXCL | O_WRONLY,
-                    S_IRUSR | S_IWUSR )) ) {
-      Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file.  Terminating.\n",
-	     SlaveInfo.rank);
+                    S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH )) == -1 ) {
+      Vprint(SEV_ERROR,"Slave %d's Writer failed to open result file '%s'.  Terminating.\n",
+	     SlaveInfo.out_files[i], SlaveInfo.rank);
       result_thread_error = 1;
       return NULL;
     }
@@ -1433,6 +1424,7 @@ void* ResultWriter(void *arg)
 	// Perform the actual write to the filesystem
 	Vprint(SEV_DEBUG,"Slave %d's Writer writing %ld bytes.\n",SlaveInfo.rank,nc[i]);
 	gettimeofday(&st, NULL);
+	fprintf(stderr, "Writing at %s:%s:%d\n", __FILE__, __func__, __LINE__);
 	if( Write(f[i],(void*)cbuff[i],nc[i]) != nc[i] ) {
 	  Vprint(SEV_ERROR,"Slave %d's Writer failed to write to result file.  Terminating.\n",
 		 SlaveInfo.rank);
@@ -1558,7 +1550,7 @@ static void Init_Slave()
   }
 
   // Build a file name for our private exe copy
-  sprintf(fn,"%s",args.exe_base);
+  sprintf(fn,"%s",EXE_BASE);
   // Open the file
   if( (fd=open(fn,O_WRONLY|O_CREAT|O_TRUNC,S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)) < 0 ) {
     Vprint(SEV_ERROR,"Failed to open exe for writing. Terminating.\n");
@@ -1581,7 +1573,7 @@ static void Init_Slave()
   CreateResultBuffers();
 
   // Initialize experimental fork lock 
-  pthread_mutex_init(&(SlaveInfo.fork_lock),  NULL);
+  fork_init_lock();
 }
 
 
@@ -1608,6 +1600,7 @@ static void Slave_Exit()
   while( i-- ) {
     if( !(i%SlaveInfo.rank) ) {
       for( f=0; f<SlaveInfo.nout_files; ++f ) {
+	fprintf(stderr, "Writing at %s:%s:%d\n", __FILE__, __func__, __LINE__);
         Write(Fd[f], Cbuff[f], Nc[f]);
       }
     }
@@ -1681,7 +1674,7 @@ static void Slave(int processes, int rank)
   compressedb_t  *cb, *cbi;
   workunit_t     *workunit;
   request_t      *request;
-  int             qd=0,i,j,sz,base_id;
+  int             qd=0,i,j,sz,base_id, err;
 
   gettimeofday(&tv, NULL);
   Vprint(SEV_TIMING,"[TIMING] Slave %d started at %d.%06d.\n",
@@ -1728,7 +1721,7 @@ static void Slave(int processes, int rank)
     Vprint(SEV_DEBUG,"Slave %d asking for more work from master (qd:%d).\n",
            SlaveInfo.rank,qd);
     request->count = MCW_NCORES-qd;
-    MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
+    err = MPI_Send(request, sizeof(request_t), MPI_BYTE, MASTER_RANK,
              TAG_REQUEST, MPI_COMM_WORLD);
     tscq_entry_free(si->rq,request);
 
@@ -1864,14 +1857,26 @@ static char **Find_DBFiles(int rank, int *nfiles)
   char  *fl,*f,**files,*saveptr=NULL;
   int    nf;
 
+  files = NULL;
+  nf = 0;
 
-  // Put the exe file in the front of the list
-  if( !(files=malloc(sizeof(char*))) ) {
-    Vprint(SEV_ERROR,"Failed to create file list. Terminating.\n");
-    Abort(1);
+  // Build list of exe files from the file list
+  fl = strdup(args.exes);
+  f  = strtok_r(fl, ":", &saveptr);
+  while( f ) {
+    // Make room in array for another file
+    if( !(files=realloc(files,(nf+1)*sizeof(char*))) ) {
+      Vprint(SEV_ERROR,"Failed to enlarge file list. Terminating.\n");
+      Abort(1);
+    }
+    // Put file in list
+    files[nf] = strdup(f);
+    nf++;
+    // Advance to next file in list
+    f = strtok_r(NULL, ":", &saveptr);
   }
-  files[0] = strdup(args.exe);
-  nf = 1;
+  free(fl);
+  Vprint(SEV_DEBUG, "Rank %d found EXE files\n", rank);
   
   // Build list of DB files from the file list
   fl = strdup(args.db_files);
@@ -1889,6 +1894,7 @@ static char **Find_DBFiles(int rank, int *nfiles)
     f = strtok_r(NULL, ":", &saveptr);
   }
   free(fl);
+  Vprint(SEV_DEBUG, "Rank %d found DB files\n", rank);
 
   // Check number of DB files
   if( nf > MAX_DB_FILES ) {
@@ -1908,9 +1914,9 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   struct stat     statbf;
   void           *shm;
   long            shmsz;
-  char          **files,name[1024];
+  char          **files, name[1024], *s, *saveptr;
   int             i,j,rv,node,nodes,loadstride,range[1][3];
-  int             nfiles,nout_files;
+  int             nfiles,nout_files,nexe_files,ranks_exe;
   MPI_Group       oldgroup,group;
   MPI_Comm        newcomm=MPI_COMM_NULL,comm;
 
@@ -1922,12 +1928,24 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
   nodes      = procs;
   loadstride = nodes/args.ndbs;
 
+  nexe_files = str_cnt_chr(args.exes, ':') + 1;
   nout_files = str_cnt_chr(args.out_files, ':') + 1;
+
+  // determine ranks_exe from rank and args.rank_exe
+  for (s = strtok_r(args.rank_exe, ":", &saveptr), i = 0;
+       s && i <=rank;
+       s = strtok_r(NULL, ":", &saveptr), ++i ) {
+    sscanf(s, "%d", &ranks_exe);
+  }
+  Vprint(SEV_DEBUG, "Rank %d will use exe file number %d\n", rank, ranks_exe);
 
   // This is just for timing data, really
   (*lt)=0.0f;
   (*ct)=0.0f;
   MPI_Barrier(MPI_COMM_WORLD);
+  Vprint(SEV_DEBUG, "Rank %d past first barrier\n", rank);
+
+  memset(file_is_shm, 0, sizeof(int)*MAX_DB_FILES);
 
   // Figure out our role w.r.t the DB loading
   if( loadstride > 1 ) {
@@ -1962,11 +1980,12 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       }
     }
     if( !(node%loadstride) ) {
+      Vprint(SEV_DEBUG, "Rank %d reports as bcast sender\n", rank);
       ////////////////////////////////////////////////////////////
       // We are a loading rank and we are a bcast send rank.
       ////////////////////////////////////////////////////////////
       // Get file size array ready
-      file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+      file_sizes = Create_SHM("file_sizes",sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
@@ -1982,13 +2001,13 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       // For each DB file
       for(i=0; i < nfiles; i++) {
         // Build full name
-        if( i ) {
+        if( i < nexe_files ) {
+          // exe file
+          sprintf(name,"%s",files[i]);
+        } else {
           // DB file
           sprintf(name,"%s/%s%d/%s",
             args.db_path,args.db_prefix,node/loadstride,files[i]);
-        } else {
-          // exe file
-          sprintf(name,"%s",files[i]);
         }
         // Find size
         gettimeofday(&st, NULL);
@@ -2019,7 +2038,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
         (*ct) += ((et.tv_sec*1000000+et.tv_usec) - 
                  (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
         // Save exe SHM
-        if( !i ) {
+        if( i == ranks_exe ) {
           // exe data
           shm_exe    = shm;
           shm_exe_sz = shmsz;
@@ -2029,11 +2048,12 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       //MPI_Comm_free(&newcomm);
       //MPI_Group_free(&group);
     } else if ( node%loadstride ) {
+      Vprint(SEV_DEBUG, "Rank %d reports as bcast receiver\n", rank);
       ////////////////////////////////////////////////////////////
       // We are a bcast receive rank.
       ////////////////////////////////////////////////////////////
       // Get file size array ready
-      file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+      file_sizes = Create_SHM("file_sizes", sizeof(filesizes_t),&file_sizes_fd);
       memset(file_sizes,0,sizeof(filesizes_t));
       // Create the two in/out SHMs per core
       for(i=0; i<MCW_NCORES; i++) {
@@ -2055,13 +2075,13 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
         (*ct) += ((et.tv_sec*1000000+et.tv_usec) - 
                  (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
         // Receive data
-        if( i ) {
+        if( i < nexe_files) {
+          // exe data
+          sprintf(name,"%s",files[i]);
+        } else {
           // DB data
           sprintf(name,"%s/%s%d/%s",
                   args.db_path,args.db_prefix,node/loadstride,files[i]);
-        } else {
-          // exe data
-          sprintf(name,"%s",files[i]);
         }
         shm = Create_DBSHM(name,shmsz);
         gettimeofday(&st, NULL);
@@ -2070,7 +2090,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
         (*ct) += ((et.tv_sec*1000000+et.tv_usec) - 
             (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
         // Save exe SHM
-        if( !i ) {
+        if( i == ranks_exe ) {
           // exe data
           shm_exe    = shm;
           shm_exe_sz = shmsz;
@@ -2080,16 +2100,18 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       //MPI_Comm_free(&newcomm);
       //MPI_Group_free(&group);
     } else {
+      Vprint(SEV_DEBUG, "Rank %d reports impossible bcast situation\n", rank);
       ////////////////////////////////////////////////////////////
       // We are not involved in DB loading
       ////////////////////////////////////////////////////////////
     }
   } else {
+    Vprint(SEV_DEBUG, "Rank %d reports no bcast necessary\n", rank);
     ////////////////////////////////////////////////////////////
     // A DB load will cover only one node.  Load once per node.
     ////////////////////////////////////////////////////////////
     // Get file size array ready
-    file_sizes = Create_SHM(sizeof(filesizes_t),&file_sizes_fd);
+    file_sizes = Create_SHM("file_sizes", sizeof(filesizes_t),&file_sizes_fd);
     memset(file_sizes,0,sizeof(filesizes_t));
     // Create the two in/out SHMs per core
     for(i=0; i<MCW_NCORES; i++) {
@@ -2105,13 +2127,13 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
     // For each DB file
     for(i=0; i < nfiles; i++) {
       // Build full path name
-      if( i ) {
+      if( i < nexe_files ) {
+        // exe file
+        sprintf(name,"%s",files[i]);
+      } else {
         // DB file
         sprintf(name,"%s/%s%d/%s",
                 args.db_path,args.db_prefix,node/loadstride,files[i]);
-      } else {
-        // exe file
-        sprintf(name,"%s",files[i]);
       }
       // Find size
       gettimeofday(&st, NULL);
@@ -2131,7 +2153,7 @@ static void Init_DB(int procs, int rank, float *lt, float *ct)
       (*lt) += ((et.tv_sec*1000000+et.tv_usec) - 
                (st.tv_sec*1000000+st.tv_usec))  / 1000000.0f;
       // Save exe SHM
-      if( !i ) {
+      if( i == ranks_exe ) {
         shm_exe    = shm;
         shm_exe_sz = shmsz;
       }
@@ -2216,6 +2238,7 @@ static void Init_MPI(int *procs, int *rank, int *argc, char ***argv)
       Vprint(SEV_ERROR,"Slave failed to chdir to work directory. Terminating.\n");
       Abort(1);
     }
+    rundir=strdup(fn);
   }
 
   // Record our hostname and rank
@@ -2316,16 +2339,14 @@ static void Parse_Environment(int procs)
   if( sscanf(p,"%ld",&(args.time_limit)) != 1 ) {
     UsageError();
   }
-  if( !(p=getenv("MCW_S_EXE")) ) {
+  if( !(p=getenv("MCW_S_EXES")) ) {
     UsageError();
   }
-  args.exe = strdup(p);
-  for(p=args.exe_base=args.exe; *p != '\0'; p++) {
-    if( *p == '/' ) {
-      args.exe_base = p+1;
-    }
+  args.exes = strdup(p);
+  if( !(p=getenv("MCW_S_RANK_EXE")) ) {
+    UsageError();
   }
-  args.exe_base = strdup(args.exe_base);
+  args.rank_exe = strdup(p);
   if( !(p=getenv("MCW_S_LINE")) ) {
     UsageError();
   }
@@ -2358,15 +2379,30 @@ static void sighndler(int arg)
 void sigusr_forkunlock(int arg)
 {
   UNUSED(arg);
-  pthread_mutex_unlock(&(SlaveInfo.fork_lock));
+  fork_unlock();
 }
 
 static void exitfunc()
 {
+  int i;
+  char shmname[256];
+
   // Be verbose
   if( !Rank ) {
     write(2,"ms: atexit(); cleaning up.\n",27);
   }
+
+  // Free SHMs
+  for (i=0; i<file_sizes->nfiles; ++i) {
+    if (file_is_shm[i]) {
+      snprintf(shmname, 256, "/mcw.%d.%d", getpid(), i);
+      shm_unlink(shmname);
+    }
+  }
+  
+  // Free index SHM
+  snprintf(shmname, 256, "/mcw.%d.file_sizes", getpid());
+  shm_unlink(shmname);
 
   cleanup();
 }
@@ -2399,12 +2435,11 @@ void* killtimer(void *arg)
 }
 
 
-int main(int argc, char **argv)
+int mpi_main(int argc, char **argv)
 {
   struct timeval  st,et;
   float           lt,ct;
   int             processes,rank;
-
 
   // Be sure we can catch some basic signals to ensure
   // all SHMs can be removed, even in case of error.
@@ -2458,11 +2493,14 @@ int main(int argc, char **argv)
 
   // Initialize DB and make data available to all nodes
   if( !rank ) {
-    Vprint(SEV_NRML,"Distributing DB files to nodes.\n\n");
+    Vprint(SEV_NRML,"Distributing DB files to nodes.\n");
   }
+  Vprint(SEV_DEBUG,"Rank %d calling Init_DB()\n", rank);
   Init_DB(processes,rank,&lt,&ct);
+  Vprint(SEV_DEBUG,"Rank %d done with Init_DB()\n", rank);
 
   // Wait for all the ranks to finish DB loading
+  Vprint(SEV_NRML,"Waiting for ranks to finish DB load\n");
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Master reports DB load time
@@ -2489,6 +2527,215 @@ int main(int argc, char **argv)
   // Done with MPI
   MPI_Finalize();
   return 0;
+}
+
+
+int psmgr_main(int argc, char **argv, int mpi_pid)
+{
+  int                     sig_fd;
+  sigset_t                sig_mask;
+  struct signalfd_siginfo sig_info;
+
+  int            st, i, j, nfds;
+  size_t         sz;
+  char           exe_name[sizeof(EXE_BASE)+4];
+  char         **new_argv;
+  fd_set         rfds;
+  pid_t          pids[MCW_NCORES];
+  struct timeval tv;
+
+  char old_rundir[PATH_MAX];
+  old_rundir[0] = '\0';
+
+  // Block standard SIGCHLD disposition
+  sigemptyset(&sig_mask);
+  sigaddset(&sig_mask, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &sig_mask, NULL) == -1) {
+    // ERROR
+  }
+
+  // Get file-descriptor for handling SIGCHLD
+  sig_fd = signalfd(-1, &sig_mask, 0);
+  if (sig_fd == -1) {
+    // ERROR
+  }
+
+  for (i=0; i<MCW_NCORES; ++i) {
+    pids[i] = 0;
+  }
+
+  // Setup the environment for the child process
+  int nenv;
+  char **env;
+  for (nenv=0, env=environ; *env; nenv++, env++);
+  
+  // Copy original values
+  char **new_environ = malloc(sizeof(char*) * (nenv+3));
+  for (i=0, j=2; i < nenv; i++, j++) {
+    new_environ[j] = environ[i];
+  }
+  // Our values
+  new_environ[0] = "MCW_WID=0";
+  asprintf(&(new_environ[1]), "MCW_PID=%d", mpi_pid);
+  // Null terminate
+  new_environ[j] = NULL;
+  
+  // Prepare exe name for exec
+  sprintf(exe_name, "./%s", EXE_BASE);
+
+  // Finally, prepare argv for exec
+  new_argv = Worker_BuildArgv(0, 0);
+
+
+  while (1) {
+    // We want to listen for SIGCHLD and on incoming commands
+    FD_ZERO(&rfds);
+    FD_SET(sig_fd, &rfds);
+    nfds = sig_fd;
+    for (i=0; i<MCW_NCORES; ++i) {
+      FD_SET(psmgr_cmd_pipes[i].fds[0], &rfds);
+      if (psmgr_cmd_pipes[i].fds[0] > nfds) {
+	nfds = psmgr_cmd_pipes[i].fds[0];
+      }
+    }
+    nfds++;
+
+    // Select()'s timeout
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+
+    st = select(nfds, &rfds, NULL, NULL, &tv);
+    if (st == -1) {
+      perror("select()");
+    } else if (st) {
+      if (FD_ISSET(sig_fd, &rfds)) {
+	sz = read(sig_fd, &sig_info, sizeof(struct signalfd_siginfo));
+	if (sz != sizeof(struct signalfd_siginfo)) {
+	  // ERROR
+	}
+	if (sig_info.ssi_signo != SIGCHLD) {
+	  // ERROR
+	}
+	// We must loop, since multiple SIGCHLDs could be bundled into this signalfd read
+	while (1) {
+	  // Get next SIGCHLD signal
+ 	  int pid = waitpid(-1, &st, 0);
+	  if (pid <= 0) {
+	    break;
+	  }
+
+	  if (pid == mpi_pid) {
+	    if (WIFEXITED(st)) {
+	      // MPI is dead, we should die too...
+	      fprintf(stderr, "MPI process (%d) has exited. Goodbye!!!!!!!!!!!!!!!!!!!!!!!!!1\n", mpi_pid);
+	      return WEXITSTATUS(st);
+	    }
+	  } else {
+	    if (WIFEXITED(st)) {
+	      // A child (job) has died
+	      for (i=0; i<MCW_NCORES; ++i) {
+		if (pids[i] == pid) {
+		  // Found the worker who requested this job
+		  pids[i] = 0;
+		  write(psmgr_stat_pipes[i].fds[1], &st, sizeof(int));
+		  break;
+		}
+	      }
+	      if (i==MCW_NCORES) {
+		fprintf(stderr, "An unrecognized processs (%d) has exited. Goodbye!!!!!!!!!!!!!!!!!!!!!!!!!1\n", pid);
+	      }
+	    }
+	  }
+	}
+      }
+
+      // Check each of the worker pipes for commands
+      for (i=0; i<MCW_NCORES; ++i) {
+	if (FD_ISSET(psmgr_cmd_pipes[i].fds[0], &rfds)) {
+	  char rundir[PATH_MAX];
+	  read(psmgr_cmd_pipes[i].fds[0], &rundir, PATH_MAX);
+
+	  // Change into our work directory
+	  // FIXME: Silly way to do this, would be better to get this info on init
+	  if (strcmp(rundir, old_rundir)) {
+	    if( chdir(rundir) < 0 ) {
+	      Vprint(SEV_ERROR,"Forker failed to chdir to work directory. Terminating.\n");
+	      Abort(1);
+	    }
+	    strcpy(old_rundir, rundir);
+	  }
+
+	  if( (pids[i]=fork()) > 0 ) {
+	    // This is the forker process (parent)
+	    Vprint(SEV_DEBUG, "Slave ? Worker %d's child's pid: %d.\n", i, pids[i]);
+	  } else if( !pids[i] ) {
+	    // This is the child process
+	    asprintf(&(new_environ[0]), "MCW_WID=%d", i);
+	    
+	    // Run the DB search
+	    if( execve(exe_name, new_argv, new_environ) < 0 ) {
+	      Vprint(SEV_ERROR,"Worker's child failed to exec DB.\n");
+	      perror(MCW_BIN);
+	    }
+	  } else {
+	    // Fork failed
+	    Vprint(SEV_ERROR,"Worker failed to start DB search.\n");
+	    perror(MCW_BIN);
+	  }
+	}
+      }
+    } else {
+      printf("No data within 5 seconds.\n");
+    }
+  } // event loop
+
+  return EXIT_FAILURE;
+}
+
+int main(int argc, char **argv)
+{
+  int mpi_pid, tmp_pid, forker_pid, i;
+
+  // Initialize Process manager IPC
+  psmgr_cmd_pipes  = malloc(MCW_NCORES * sizeof(struct pipe_fds));
+  psmgr_stat_pipes = malloc(MCW_NCORES * sizeof(struct pipe_fds));
+  for (i = 0; i < MCW_NCORES; ++i) {
+    if (pipe(psmgr_cmd_pipes[i].fds) == -1) {
+      Vprint(SEV_ERROR,"Could not open pipe for forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+    if (pipe(psmgr_stat_pipes[i].fds) == -1) {
+      Vprint(SEV_ERROR,"Could not open pipe for forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  mpi_pid = getpid();
+
+  if ((tmp_pid = fork()) > 0) {
+    // parent process
+    return mpi_main(argc, argv);
+  } else if (!tmp_pid) {
+    /*
+    // temporary process
+    if ((forker_pid = fork()) > 0) {
+      // still in temporary process, kill it
+      kill(SIGKILL, getpid());
+    } else if (!forker_pid) {
+      // forker process
+      return psmgr_main(argc, argv, mpi_pid);
+    } else {
+      Vprint(SEV_ERROR,"Could not fork forker process.  Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+    */
+    // forker process
+    return psmgr_main(argc, argv, mpi_pid);
+  } else {
+    Vprint(SEV_ERROR,"Could not fork temporary process.  Terminating.\n");
+    exit(EXIT_FAILURE);
+  }
+  exit(EXIT_FAILURE);
 }
 
 // vim: ts=8:sts=2:sw=2

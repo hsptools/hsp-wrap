@@ -11,7 +11,7 @@ main(int argc, char **argv)
   char c[40];
   int i;
 
-  outf = fopen(argv[1], "w");
+  outf = stdiowrap_fopen(argv[1], "w");
   inf  = stdiowrap_fopen(argv[2], "r");
 
   if (!outf || !inf) {
@@ -20,13 +20,12 @@ main(int argc, char **argv)
   }
 
   for (i=0; stdiowrap_fgets(c, sizeof(c), inf) != NULL; ++i) {
-    sleep(1);  
-    fputs(c, outf);
+    stdiowrap_fputs(c, outf);
   }
 
-  stdiowrap_fclose(inf);
-  fclose(outf);
-
   fprintf(stderr, "Wrote %d lines\n. Done.", i);
+  stdiowrap_fclose(inf);
+  stdiowrap_fclose(outf);
+
   return EXIT_SUCCESS;
 }

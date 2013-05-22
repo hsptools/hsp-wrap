@@ -27,7 +27,7 @@
 #define SEV_WARN    1
 #define SEV_DEBUG   2
 #define SEV_TIMING  3
-#define VERBOSITY   SEV_WARN
+#define VERBOSITY   SEV_NRML
 
 
 // Maximum number of DB files
@@ -37,8 +37,8 @@
 // Many options are set from env vars, which are
 // put in this struct, rather than constants.
 typedef struct st_args {
-  char *exe;             // Path to blastall executable
-  char *exe_base;        // argv[0] of child process
+  char *exes;            // Path to executables for all archs
+  char *rank_exe;        // rank-to-exe mapping
   char *db_path;         // Path to DBs
   char *db_prefix;       // Path to DBs
   char *db_files;        // Filenames in the DB
