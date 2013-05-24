@@ -1,9 +1,16 @@
+// Enable Linux sched support for cpu-affinity right now
+#define _GNU_SOURCE 
+
 #include <assert.h>
+#include <fcntl.h>
 #include <inttypes.h>
-#include <unistd.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/shm.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -12,11 +19,13 @@
 #include <sys/shm.h>
 #include <sys/stat.h>
 
-#include <semaphore.h>
 #include <string.h>
 
 #include <errno.h>
 #include <error.h>
+
+// Linux-specific (TODO: make configurable)
+#include <sched.h>
 
 #include <hsp/process-control.h>
 
@@ -28,6 +37,7 @@
 #define MAX(a, b) (((a)>(b))?(a):(b))
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+#define ZERO_ARRAY(a) memset(a, 0, sizeof(a))
 
 #define HSP_ERROR 1
 enum HspError {
@@ -48,10 +58,9 @@ void sigchld_handler (int signo);
 void print_tod (FILE *f);
 
 wid_t worker_for_pid (pid_t pid);
-int create_shm (void *shm, int *fd, size_t size);
+static void *create_shm (char *name, long shmsz, int *fd);
 void fetch_work (wid_t wid, char *data);
 int fork_worker (wid_t wid, char *exe);
-int wait_service ();
 
 
 struct process_control *ps_ctl;
@@ -62,6 +71,7 @@ struct worker_process worker_ps[MAX_PROCESSES];
 /**
  * Wrapper-wide signal handler
  */
+/*
 void
 sigchld_handler (int signo)
 {
@@ -91,7 +101,7 @@ sigchld_handler (int signo)
     }
   }
 }
-
+*/
 
 /**
  *  Lookup process by worker-id
@@ -111,45 +121,43 @@ worker_for_pid (pid_t pid)
 
 
 /**
- * Create a shared memory segment, and mark it for removal.  As soon as all
- * attachments are gone, the segment will be destroyed by the OS.
+ * Create a shared memory segment and map it into virtual memory.
  */
-int
-create_shm (void *shm, int *fd, size_t size)
+static void *
+create_shm (char *name, long shmsz, int *fd)
 {
-  void **p = shm;
-  int shm_fd;
+  void *shm;
+  int   shmfd;
+  char  shmname[256];
 
-  // Not accepting the returned buffer is a programming error
-  assert(shm);
+  snprintf(shmname, 256, "/mcw.%d.%s", getpid(), name);
 
-  // Create the SHM
-  shm_fd = shmget(IPC_PRIVATE, size,
-                  IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-
-  if (shm_fd < 0) {
-    //nih_error_raise_printf(HSP_ERROR_FAILED,
-    //    "Failed to create SHM: %s", strerror(errno));
-    return errno;
+  // Create the shared memory segment, and then mark for removal.
+  // As soon as all attachments are gone, the segment will be
+  // destroyed by the OS.
+  shmfd = shm_open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+  if (shmfd < 0) {
+    fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n",shmsz,strerror(errno));
+    exit(EXIT_FAILURE);
   }
-
-  // Attach
-  (*p) = shmat(shm_fd, NULL, 0);
-  if ((*p) == ((void *) -1)) {
-    //nih_error_raise_printf(HSP_ERROR_FAILED,
-    //    "Failed to create SHM: %s", strerror(errno));
-    return errno;
+  if ((ftruncate(shmfd, shmsz)) != 0) {
+    fprintf(stderr, "Failed to resize SHM (%d).  Terminating.\n",errno);
+    exit(EXIT_FAILURE);
   }
+  shm = mmap(NULL, shmsz, PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
 
-  // Mark for removal
-  shmctl(shm_fd, IPC_RMID, NULL);
-
+  if (shm == MAP_FAILED) {
+    fprintf(stderr, "Failed to attach SHM. Terminating.\n");
+    exit(EXIT_FAILURE);
+  }
+  
   // Return the created SHM
   if (fd) {
-    *fd = shm_fd;
+    *fd = shmfd;
   }
-
-  return 0;
+  return shm;
 }
 
 
@@ -193,7 +201,7 @@ fork_worker (wid_t wid, char *exe)
 
   if (pid == 0) {
     // Child
-    snprintf(env[0], ARRAY_SIZE(env[0]), PS_CTL_FD_ENVVAR "=%d\n", ps_ctl_fd);
+    snprintf(env[0], ARRAY_SIZE(env[0]), PID_ENVVAR "=%d", getppid());
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
     if (execle(exe, "test", "outputfile", "inputfile", NULL, env_list)) {
@@ -204,10 +212,20 @@ fork_worker (wid_t wid, char *exe)
     }
   }
   else if (pid > 0) {
+    // Parent
     worker_ps[wid].pid = pid;
     //worker_process[wid].status = 0;
-    // Parent
-    print_tod(stderr);
+
+    // Set CPU infinity to one core
+    // FIXME This masking isn't exactly right, but works for nproc==ncpu
+    cpu_set_t *mask = CPU_ALLOC(ps_ctl->nprocesses);
+    size_t     size = CPU_ALLOC_SIZE(ps_ctl->nprocesses);
+    CPU_ZERO_S(size, mask);
+    CPU_SET_S(wid, size, mask);
+
+    printf("W%u affinity: %d\n", wid, sched_setaffinity(pid, size, mask));
+
+    CPU_FREE(mask);
     return 0;
   }
   return -1;
@@ -215,11 +233,16 @@ fork_worker (wid_t wid, char *exe)
 
 
 int
-wait_service ()
+all_processes_running()
 {
-  return sem_wait(&ps_ctl->sem_service);
+  int i;
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    if (ps_ctl->process_state[i] != RUNNING) {
+      return 0;
+    }
+  }
+  return 1;
 }
-
 
 int
 main (int argc, char **argv)
@@ -230,6 +253,8 @@ main (int argc, char **argv)
   int i, j, wid;
 
   struct timeval tv[2];
+  pthread_mutexattr_t mattr;
+  pthread_condattr_t  cattr;
 
   if (argc != 2) {
     fputs("Invalid number of arguments\n", stderr);
@@ -237,30 +262,52 @@ main (int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-  // Register signal and signal handler
-  signal(SIGCHLD, sigchld_handler);
-
-  // Create main "process control" structure
-  if (create_shm(&ps_ctl, &ps_ctl_fd, sizeof(struct process_control))) {
-    //err = nih_error_get();
-    //fprintf(stderr, "Could not initalize file table: %s\n", err->message);
-    fprintf(stderr, "Could not initalize file table\n");
+  // inter-process mutexes
+  if (pthread_mutexattr_init(&mattr)) {
+    fprintf(stderr, "Could not initalize mutex attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED)) {
+    fprintf(stderr, "Could not set mutex attributes\n");
     exit(EXIT_FAILURE);
   }
 
+  // inter-process condition variables
+  if (pthread_condattr_init(&cattr)) {
+    fprintf(stderr, "Could not initalize condition variable attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED)) {
+    fprintf(stderr, "Could not set condition variable attributes\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Create main "process control" structure
+  ps_ctl = create_shm(PS_CTL_SHM_NAME, sizeof(struct process_control), &ps_ctl_fd);
+
   // Process control data
   ps_ctl->nprocesses = MIN(NUM_PROCS, NUM_JOBS);
-  printf("Processes: %d\n", ps_ctl->nprocesses);
 
-  sem_init(&ps_ctl->sem_service, 1, 0);
+  pthread_mutex_init(&ps_ctl->lock, &mattr);
+  pthread_cond_init(&ps_ctl->need_service, &cattr);
+
   for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    sem_init(&ps_ctl->process_lock[i], 1, 1);
-    sem_init(&ps_ctl->process_ready[i], 1, 0);
+    pthread_cond_init(&ps_ctl->process_ready[i], &cattr);
     ps_ctl->process_state[i] = DONE;
     ps_ctl->process_cmd[i] = QUIT;
     worker_ps->wid = i;
     worker_ps->pid = 0;
     worker_ps->status = 0;
+  }
+
+  // Cleanup
+  if (pthread_mutexattr_destroy(&mattr)) {
+    fprintf(stderr, "Could not free mutex attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_condattr_destroy(&cattr)) {
+    fprintf(stderr, "Could not free condition variable attributes\n");
+    exit(EXIT_FAILURE);
   }
 
   // Empty file table
@@ -270,14 +317,12 @@ main (int argc, char **argv)
   for (i = 0; i < ps_ctl->nprocesses; ++i) {
     int   fd;
     void *shm;
+    char  shmname[10];
 
-    if (create_shm(&shm, &fd, BUFFER_SIZE)) {
-      //err = nih_error_get();
-      //fprintf(stderr, "Could not initalize file table entry: %s\n", err->message);
-      fprintf(stderr, "Could not initalize file table entry\n");
-      exit(EXIT_FAILURE);
-    }
-    if ((j = ps_ctl->ft.nfiles) < MAX_DB_FILES) {
+    j = ps_ctl->ft.nfiles;
+    snprintf(shmname, 10, "%d", j);
+    shm = create_shm(shmname, BUFFER_SIZE, &fd);
+    if (j < MAX_DB_FILES) {
       ps_ctl->ft.file[j].shm      = shm;
       ps_ctl->ft.file[j].shm_fd   = fd;
       ps_ctl->ft.file[j].shm_size = BUFFER_SIZE;
@@ -291,11 +336,10 @@ main (int argc, char **argv)
       exit(EXIT_FAILURE);
     }
 
-    if (create_shm(&shm, &fd, BUFFER_SIZE)) {
-      fprintf(stderr, "Could not initalize file table entry. Terminating.\n");
-      exit(EXIT_FAILURE);
-    }
-    if ((j = ps_ctl->ft.nfiles) < MAX_DB_FILES) {
+    j = ps_ctl->ft.nfiles;
+    snprintf(shmname, 10, "%d", j);
+    shm = create_shm(shmname, BUFFER_SIZE, &fd);
+    if (j < MAX_DB_FILES) {
       ps_ctl->ft.file[j].shm      = shm;
       ps_ctl->ft.file[j].shm_fd   = fd;
       ps_ctl->ft.file[j].shm_size = BUFFER_SIZE;
@@ -309,6 +353,16 @@ main (int argc, char **argv)
     }
   }
 
+  // Now print some stats
+  printf("Processes: %d\n", ps_ctl->nprocesses);
+  printf("Process ID: %d\n", getpid());
+
+  // Forker code
+	// DUDE! Forker doesn't need to handle ps_ctl requests at all!
+	// Instead, the forker is just responsible for waiting on child death and
+	// respawn the process, lock ps_ctl, update struct, and signal for service.
+	create_shm(
+static void *create_shm (char *name, long shmsz, int *fd);
 
   // Initial distribution
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
@@ -330,13 +384,20 @@ main (int argc, char **argv)
 
   fprintf(stderr, "Waiting for service requests. (%d processes)\n", forked);
 
+  // Count number of tasks assigned to each worker
+  unsigned worker_iterations[MAX_PROCESSES];
+  ZERO_ARRAY(worker_iterations);
+
   gettimeofday(tv+0, NULL);
   for (i=NUM_JOBS; i;) {
     // Wait for a process to need service
-    wait_service();
-    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-      sem_wait(&ps_ctl->process_lock[wid]);
+    pthread_mutex_lock(&ps_ctl->lock);
+    while (all_processes_running()) {
+      pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
+    }
 
+    // Now, service all processes
+    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
       // Set any state from ended processes
       if (worker_ps[wid].status_changed) {
         if (WIFSIGNALED(worker_ps[wid].status)) {
@@ -349,11 +410,12 @@ main (int argc, char **argv)
 
       switch (ps_ctl->process_state[wid]) {
       case EOD:
-	fetch_work(wid, "That's all folks!\n");
-	// TODO: Move process_* changes to fetch_work(); ?
-	ps_ctl->process_cmd[wid] = RUN;
-	sem_post(&ps_ctl->process_ready[wid]);
-	i--;
+        worker_iterations[wid]++;
+        fetch_work(wid, "That's all folks!\n");
+        // TODO: Move process_* changes to fetch_work(); ?
+        ps_ctl->process_cmd[wid] = RUN;
+        pthread_cond_signal(&ps_ctl->process_ready[wid]);
+        i--;
         break;
       case NOSPACE:
         fprintf(stderr, "PROCESS NO SPACE\n");
@@ -371,12 +433,14 @@ main (int argc, char **argv)
         break;
       case IDLE:
       case RUNNING:
-        // Not a process of interest, move on.
+        // Not of interest, move on.
         break;
       }
-      sem_post(&ps_ctl->process_lock[wid]);
     }
+    // Done modifying process states
+    pthread_mutex_unlock(&ps_ctl->lock);
   }
+
   gettimeofday(tv+1, NULL);
 
   // Dump output
@@ -393,6 +457,10 @@ main (int argc, char **argv)
 
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
            + (tv[1].tv_usec - tv[0].tv_usec);
+
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    printf("Worker %2u iterations: %5u\n", i, worker_iterations[i]);
+  }
 
   printf("Time taken: %lfs (%lfms average)\n",
       ((double)t) / 1000000.0,

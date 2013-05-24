@@ -1,14 +1,16 @@
 #ifndef HSP_PROCESS_CONTROL_H__
 #define HSP_PROCESS_CONTROL_H__
 
-#include <semaphore.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <inttypes.h>
 
 #define MAX_PROCESSES  8
 #define MAX_DB_FILES   (256)
 #define MAX_FILE_PATH  256
-#define PS_CTL_FD_ENVVAR "HSPWRAP_CTL_SHM_FD"
+
+#define PS_CTL_SHM_NAME "ps_ctl"
+#define PID_ENVVAR "HSPWRAP_PID"
 #define WORKER_ID_ENVVAR "HSPWRAP_WID"
 
 // TODO: We can probably remove this with a better N:M mapping for files
@@ -60,6 +62,7 @@ enum process_state {
  * Command issued by scheduler
  */
 enum process_cmd {
+  NO_CMD,    // No command is currently provided
   RUN,       // More data is available, do something with it
   SUSPEND,   // Free as much resources as possible (kill processes, free buffers)
   RESTORE,   // Reinitialize after a suspend
@@ -73,13 +76,12 @@ struct process_control {
   int   nprocesses;               // Number of processes
 
   // Between input layer and processes
-  sem_t process_lock[MAX_PROCESSES];
-  sem_t process_ready[MAX_PROCESSES];
+  pthread_mutex_t    lock;
+  pthread_cond_t     need_service;
+  pthread_cond_t     process_ready[MAX_PROCESSES];
   enum process_state process_state[MAX_PROCESSES];
   enum process_cmd   process_cmd[MAX_PROCESSES];
   
-  sem_t sem_service;
-
   //sem_t sem_empty;                 // Signal exhausted data to parent process (work request)
   //sem_t sem_avail[MAX_PROCESSES];  // Signal available data to child processes (continue)
   //sem_t sem_wait_queue;            // Lock wait queue

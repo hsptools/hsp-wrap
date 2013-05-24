@@ -29,6 +29,7 @@
 static struct process_control *ps_ctl = NULL;
 
 // Worker ID of this process
+pid_t hspwrap_pid;
 wid_t wid;
 
 // The next FILE pointer to use for open
@@ -67,7 +68,10 @@ init_SHM ()
   if (!ps_ctl) {
     char  shmname[256];
 
-    snprintf(shmname, 256, "/mcw.%s.%s", getenv("MCW_PID"), "file_sizes");
+    parse_env(&hspwrap_pid, PID_ENVVAR, "%d");
+    parse_env(&wid, WORKER_ID_ENVVAR, "%" SCN_WID);
+
+    snprintf(shmname, 256, "/mcw.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
     fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
     
     // The file descriptors for the SHMs will already be available to
@@ -76,8 +80,6 @@ init_SHM ()
     // our parent already marked the SHMs for removal, so they will
     // cleaned up for us later.
     /*
-    parse_env(&fd,  PS_CTL_FD_ENVVAR, "%d");
-    parse_env(&wid, WORKER_ID_ENVVAR, "%" SCN_WID);
 
     // Attach the SHM
     ps_ctl = shmat(fd, NULL, 0);
@@ -89,11 +91,11 @@ init_SHM ()
     // Attach the SHM
     struct stat st;
     fstat(fd, &st);
-    file_sizes = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, 
+    ps_ctl = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, 
                       MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
                       fd, 0);
-    if( file_sizes == MAP_FAILED ) {
-      fprintf(stderr,"stdiowrap: Failed to attach index SHM (%d): %s\n", fd, strerror(errno));
+    if (ps_ctl == MAP_FAILED) {
+      fprintf(stderr,"stdiowrap: Failed to attach index SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
     }
   }
@@ -116,18 +118,18 @@ fill_WFILE_data_SHM (struct WFILE *wf)
     if (!strcmp(f->name, wf->name) && f->wid == wid) {
       char  shmname[256];
 
-      fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
+      //fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
 
-      snprintf(shmname, 256, "/mcw.%s.%d", getenv("MCW_PID"), i);
+      snprintf(shmname, 256, "/mcw.%d.%d", hspwrap_pid, i);
       int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
       
       // Attach the shared memory segment
-      wf->data = mmap(NULL, f.shmsize, PROT_READ | PROT_WRITE, 
+      wf->data = mmap(NULL, f->shm_size, PROT_READ | PROT_WRITE, 
                       MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
                       fd, 0);
       if (wf->data == MAP_FAILED) {
         fprintf(stderr, "stdiowrap: Failed to attach SHM.\n");
-	fflush(stderr);
+        fflush(stderr);
 	      exit(1);
       }
       wf->size  = f->size;
@@ -163,10 +165,11 @@ new_WFILE (const char *fn)
 {
   struct WFILE *wf;
   const char *name=NULL;
-  char  *saveptr, *files, *n;
-  int    rv, i, qidx;
+  int    rv;
 
   /*
+  char  *saveptr, *files, *n;
+  int    rv, i, qidx;
   char   buf[512];
   // Map filename to proper SHM name
   if (!strncmp(fn,":DB:", 4)) {
@@ -313,24 +316,11 @@ find_WFILE (FILE *f)
 }
 
 
-static int
-lock ()
-{
-  return sem_wait(&ps_ctl->process_lock[wid]);
-}
-
-
-static int
-unlock ()
-{
-  return sem_post(&ps_ctl->process_lock[wid]);
-}
-
-
 static void
 set_status (enum process_state st)
 {
   ps_ctl->process_state[wid] = st;
+  ps_ctl->process_cmd[wid]   = NO_CMD;
 }
 
 
@@ -342,35 +332,32 @@ get_command ()
 
 
 static int
-wait()
-{
-  //fprintf(stderr, "Worker waiting for service...\n");
-  sem_post(&ps_ctl->sem_service);
-  return sem_wait(&ps_ctl->process_ready[wid]);
-}
-
-
-static int
 wait_eod (struct WFILE *wf)
 {
-  // Change status
-  lock();
+  enum process_cmd cmd;
+  int ret;
+
+  // Request service
+  pthread_mutex_lock(&ps_ctl->lock);
   set_status(EOD);
-  unlock();
+  pthread_cond_signal(&ps_ctl->need_service);
 
-  // Wait for service
-  wait();
+  while (get_command() == NO_CMD) {
+    pthread_cond_wait(&ps_ctl->process_ready[wid], &ps_ctl->lock);
+  }
 
-  switch (get_command()) {
+  cmd = get_command();
+  switch (cmd) {
   case RUN:
     // More data, update WFILE and continue
     wf->offset += wf->size;
     wf->size    = *wf->psize;
     wf->pos     = wf->data;
-    return 1;
+    ret = 1;
+    break;
 
   case QUIT:
-    return 0;
+    ret = 0;
 
   case SUSPEND:
   case RESTORE:
@@ -378,15 +365,15 @@ wait_eod (struct WFILE *wf)
     exit(1);
     break;
   default:
-    fprintf(stderr, "stdiowrap: Unknown command from controller. Exiting\n");
+    fprintf(stderr, "stdiowrap: Unknown command from controller (%d). Exiting\n", cmd);
     exit(1);
     break;
   }
 
   // Change status back to running (FIXME: Should be DONE if QUIT?)
-  lock();
   set_status(RUNNING);
-  unlock();
+  pthread_mutex_unlock(&ps_ctl->lock);
+  return ret;
 }
 
 

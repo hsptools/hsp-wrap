@@ -11,6 +11,8 @@ main(int argc, char **argv)
   char c[40];
   int i;
 
+  struct timespec ts = {.tv_sec=0, .tv_nsec=99999999};
+
   outf = stdiowrap_fopen(argv[1], "w");
   inf  = stdiowrap_fopen(argv[2], "r");
 
@@ -21,6 +23,8 @@ main(int argc, char **argv)
 
   for (i=0; stdiowrap_fgets(c, sizeof(c), inf) != NULL; ++i) {
     stdiowrap_fputs(c, outf);
+
+    nanosleep(&ts, NULL);
   }
 
   fprintf(stderr, "Wrote %d lines\n. Done.", i);
