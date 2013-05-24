@@ -45,6 +45,7 @@ static int     nIncludedWFILEs = 0;
 // SHM-specific routines
 ////////////////////////////////////////////////////////////////////////////////
 
+// TODO: Move to util lib
 static void
 parse_env (void *dest, char *name, const char *format)
 {
@@ -59,7 +60,7 @@ parse_env (void *dest, char *name, const char *format)
   }
 }
 
-
+// TODO: Move to util lib
 static void
 init_SHM ()
 {
@@ -358,6 +359,7 @@ wait_eod (struct WFILE *wf)
 
   case QUIT:
     ret = 0;
+    break;
 
   case SUSPEND:
   case RESTORE:
@@ -370,8 +372,6 @@ wait_eod (struct WFILE *wf)
     break;
   }
 
-  // Change status back to running (FIXME: Should be DONE if QUIT?)
-  set_status(RUNNING);
   pthread_mutex_unlock(&ps_ctl->lock);
   return ret;
 }

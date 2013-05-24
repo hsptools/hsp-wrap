@@ -7,7 +7,7 @@ from waflib import Logs
 def build(bld):
     mpienv = bld.all_envs['mpicc']
 
-    bld.program(source='src/hspwrap.c', target='hspwrap',
+    bld.program(source='src/hspwrap.c src/process_pool.c', target='hspwrap',
                 use='hsp YAML PTHREAD', lib='rt')
 
     #bld.program(lib='rt', source='src/hspwrap-ev.c', target='hspwrap-ev',

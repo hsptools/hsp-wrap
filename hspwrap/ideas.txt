@@ -1,0 +1,27 @@
+Master sends DB files to all ranks
+Each rank stores DB files into SHMs
+
+Master sends initial WUs to all ranks
+Each rank's scheduler:
+  distributes WUs to SHMs
+  requests spawns from the Runner
+
+Runner informs scheduler when process is complete/failed
+The scheduler:
+  stores result into buffer
+  pop WU from queue
+    if njobs < ncores then request WUs from master
+  stores WU into SHM
+  requests spawn/continuation
+
+Writer waits until buffer is not full
+  If past size/time threshold then flush
+  signals that buffer is empty/not-full
+
+----
+
+Runner:
+  Requests:
+    spawn_process()    // public
+    service_process()  // a process is in need of help (needed if we wait()?
+    
