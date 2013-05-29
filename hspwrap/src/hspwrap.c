@@ -1,27 +1,24 @@
 #include <assert.h>
+#include <errno.h>
+#include <error.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
-// SHM
-#include <sys/shm.h>
-#include <sys/stat.h>
-
-#include <string.h>
-
-#include <errno.h>
-#include <error.h>
-
+#include <mpi.h>
 #include <hsp/process-control.h>
+
 #include "process_pool.h"
 
 #define NUM_PROCS      2
@@ -37,11 +34,14 @@
 
 void print_tod (FILE *f);
 
+static void *ps_ctl_init ();
+static int   ps_ctl_add_file (wid_t wid, char *name, size_t sz);
+static int   ps_ctl_all_done ();
+static int   ps_ctl_all_running ();
+
 static void *create_shm (char *name, long shmsz, int *fd);
 static void  fetch_work (wid_t wid, char *data);
 static void  fork_process_pool ();
-static int   all_processes_done();
-static int   all_processes_running();
 
 //// State
 
@@ -53,11 +53,9 @@ int ps_ctl_fd;
 int
 main (int argc, char **argv)
 {
-  int i, j, wid;
+  int i, wid;
 
   struct timeval tv[2];
-  pthread_mutexattr_t mattr;
-  pthread_condattr_t  cattr;
 
   if (argc != 2) {
     fputs("Invalid number of arguments\n", stderr);
@@ -65,97 +63,24 @@ main (int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-  // inter-process mutexes
-  if (pthread_mutexattr_init(&mattr)) {
-    fprintf(stderr, "Could not initalize mutex attributes\n");
-    exit(EXIT_FAILURE);
-  }
-  if (pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED)) {
-    fprintf(stderr, "Could not set mutex attributes\n");
-    exit(EXIT_FAILURE);
-  }
+//  slave_init();
+//  master_init();
 
-  // inter-process condition variables
-  if (pthread_condattr_init(&cattr)) {
-    fprintf(stderr, "Could not initalize condition variable attributes\n");
-    exit(EXIT_FAILURE);
-  }
-  if (pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED)) {
-    fprintf(stderr, "Could not set condition variable attributes\n");
-    exit(EXIT_FAILURE);
-  }
 
-  // Create main "process control" structure
-  ps_ctl = create_shm(PS_CTL_SHM_NAME, sizeof(struct process_control), &ps_ctl_fd);
-
-  // Process control data
-  ps_ctl->nprocesses = MIN(NUM_PROCS, NUM_JOBS);
-
-  pthread_mutex_init(&ps_ctl->lock, &mattr);
-  pthread_cond_init(&ps_ctl->need_service, &cattr);
-
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    pthread_cond_init(&ps_ctl->process_ready[i], &cattr);
-    ps_ctl->process_state[i] = DONE;
-    ps_ctl->process_cmd[i] = QUIT;
-  }
-
-  // Cleanup
-  if (pthread_mutexattr_destroy(&mattr)) {
-    fprintf(stderr, "Could not free mutex attributes\n");
-    exit(EXIT_FAILURE);
-  }
-  if (pthread_condattr_destroy(&cattr)) {
-    fprintf(stderr, "Could not free condition variable attributes\n");
-    exit(EXIT_FAILURE);
-  }
-
-  // Empty file table
-  ps_ctl->ft.nfiles = 0;
+//void slave_init ()
+//{
+  ps_ctl_init();
 
   // Create bogus "input" and "output" buffers (one per process for testing)
   for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    int   fd;
-    void *shm;
-    char  shmname[10];
-
-    j = ps_ctl->ft.nfiles;
-    snprintf(shmname, 10, "%d", j);
-    shm = create_shm(shmname, BUFFER_SIZE, &fd);
-    if (j < MAX_DB_FILES) {
-      ps_ctl->ft.file[j].shm      = shm;
-      ps_ctl->ft.file[j].shm_fd   = fd;
-      ps_ctl->ft.file[j].shm_size = BUFFER_SIZE;
-      ps_ctl->ft.file[j].wid      = i;
-      ps_ctl->ft.file[j].size     = 0;
-      sprintf(ps_ctl->ft.file[j].name, "inputfile");
-
-      ps_ctl->ft.nfiles++;
-    } else {
-      fprintf(stderr, "Too many DB files; increase MAX_DB_FILES. Terminating.\n");
-      exit(EXIT_FAILURE);
-    }
-
-    j = ps_ctl->ft.nfiles;
-    snprintf(shmname, 10, "%d", j);
-    shm = create_shm(shmname, BUFFER_SIZE, &fd);
-    if (j < MAX_DB_FILES) {
-      ps_ctl->ft.file[j].shm      = shm;
-      ps_ctl->ft.file[j].shm_fd   = fd;
-      ps_ctl->ft.file[j].shm_size = BUFFER_SIZE;
-      ps_ctl->ft.file[j].wid      = i;
-      ps_ctl->ft.file[j].size     = 0;
-      sprintf(ps_ctl->ft.file[j].name, "outputfile");
-      ps_ctl->ft.nfiles++;
-    } else {
-      fprintf(stderr, "Too many DB files; increase MAX_DB_FILES. Terminating.\n");
-      exit(EXIT_FAILURE);
-    }
+    ps_ctl_add_file(i, "inputfile", BUFFER_SIZE);
+    ps_ctl_add_file(i, "outputfile", BUFFER_SIZE);
   }
 
   // Now print some stats
   printf("Processes: %d\n", ps_ctl->nprocesses);
   printf("Process ID: %d\n\n", getpid());
+//}
 
   // Initial distribution
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
@@ -180,13 +105,13 @@ main (int argc, char **argv)
   i=NUM_JOBS;
   while (1) {
     pthread_mutex_lock(&ps_ctl->lock);
-    if (all_processes_done()) {
+    if (ps_ctl_all_done()) {
       // All processes are done! exit loop
       pthread_mutex_unlock(&ps_ctl->lock);
       break;
     }
     // Otherwise, wait for a process to need service
-    while (all_processes_running()) {
+    while (ps_ctl_all_running()) {
       pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
     }
 
@@ -310,6 +235,118 @@ create_shm (char *name, long shmsz, int *fd)
 }
 
 
+static void *
+ps_ctl_init ()
+{
+  pthread_mutexattr_t mattr;
+  pthread_condattr_t  cattr;
+  int i;
+
+  // inter-process mutexes
+  if (pthread_mutexattr_init(&mattr)) {
+    fprintf(stderr, "Could not initalize mutex attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED)) {
+    fprintf(stderr, "Could not set mutex attributes\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // inter-process condition variables
+  if (pthread_condattr_init(&cattr)) {
+    fprintf(stderr, "Could not initalize condition variable attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED)) {
+    fprintf(stderr, "Could not set condition variable attributes\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Create main "process control" structure
+  ps_ctl = create_shm(PS_CTL_SHM_NAME, sizeof(struct process_control), &ps_ctl_fd);
+
+  // Process control data
+  ps_ctl->nprocesses = MIN(NUM_PROCS, NUM_JOBS);
+
+  pthread_mutex_init(&ps_ctl->lock, &mattr);
+  pthread_cond_init(&ps_ctl->need_service, &cattr);
+
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    pthread_cond_init(&ps_ctl->process_ready[i], &cattr);
+    ps_ctl->process_state[i] = DONE;
+    ps_ctl->process_cmd[i] = QUIT;
+  }
+
+  // Cleanup
+  if (pthread_mutexattr_destroy(&mattr)) {
+    fprintf(stderr, "Could not free mutex attributes\n");
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_condattr_destroy(&cattr)) {
+    fprintf(stderr, "Could not free condition variable attributes\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Empty file table
+  ps_ctl->ft.nfiles = 0;
+
+  return ps_ctl;
+}
+
+
+static int
+ps_ctl_add_file (wid_t wid, char *name, size_t sz)
+{
+    void *shm;
+    int   fd, j;
+    char  shmname[8];
+
+    j = ps_ctl->ft.nfiles;
+    snprintf(shmname, sizeof(shmname), "%d", j);
+    shm = create_shm(shmname, sz, &fd);
+    if (j < MAX_DB_FILES) {
+      ps_ctl->ft.file[j].shm      = shm;
+      ps_ctl->ft.file[j].shm_fd   = fd;
+      ps_ctl->ft.file[j].shm_size = sz;
+      ps_ctl->ft.file[j].wid      = wid;
+      ps_ctl->ft.file[j].size     = 0;
+      strcpy(ps_ctl->ft.file[j].name, name);
+
+      ps_ctl->ft.nfiles++;
+    } else {
+      fprintf(stderr, "Too many DB files; increase MAX_DB_FILES. Terminating.\n");
+      exit(EXIT_FAILURE);
+    }
+    return j;
+}
+
+
+static int
+ps_ctl_all_done ()
+{
+  int i;
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    if (ps_ctl->process_state[i] != DONE) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+
+static int
+ps_ctl_all_running ()
+{
+  int i;
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    if (ps_ctl->process_state[i] != RUNNING) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+
 static void
 fetch_work (wid_t wid, char *data)
 {
@@ -358,25 +395,3 @@ fork_process_pool (char *cmd)
   }
 }
 
-static int
-all_processes_done ()
-{
-  int i;
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    if (ps_ctl->process_state[i] != DONE) {
-      return 0;
-    }
-  }
-  return 1;
-}
-static int
-all_processes_running ()
-{
-  int i;
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    if (ps_ctl->process_state[i] != RUNNING) {
-      return 0;
-    }
-  }
-  return 1;
-}
