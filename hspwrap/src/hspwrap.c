@@ -3,6 +3,7 @@
 #include <error.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -35,11 +36,13 @@
 void print_tod (FILE *f);
 
 static void *ps_ctl_init ();
-static int   ps_ctl_add_file (wid_t wid, char *name, size_t sz);
+static void *ps_ctl_add_file (wid_t wid, char *name, size_t sz);
 static int   ps_ctl_all_done ();
 static int   ps_ctl_all_running ();
 
 static void *create_shm (char *name, long shmsz, int *fd);
+static void  broadcast_file(char *path, int rank);
+static int   mkpath (char *path, mode_t mode);
 static void  fetch_work (wid_t wid, char *data);
 static void  fork_process_pool ();
 
@@ -50,12 +53,91 @@ int ps_ctl_fd;
 
 //// Definitions
 
+static void
+broadcast_file(char *path, int rank)
+{
+  struct stat st;
+  void  *data;
+  size_t sz;
+  int    fd;
+
+  // Broadcast file size
+  if (!rank) {
+    if ((fd = open(path, O_RDONLY)) == -1) {
+      fprintf(stderr, "%s: Could not open file: %s\n", path, strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+    if (fstat(fd, &st) < 0) {
+      close(fd);
+      fprintf(stderr, "%s: Could not stat file: %s\n", path, strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+    sz = st.st_size;
+  }
+  MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  // Read and broadcast data into slave's SHMs
+  if (rank) {
+    data = ps_ctl_add_file(-1, path, sz);
+  } else {
+    data = mmap(NULL, sz, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
+    if (data == MAP_FAILED) {
+      close(fd);
+      fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+  }
+  MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  // Done broadcasting file, sender will no longer need it (for now)
+  if (!rank) {
+    munmap(data, sz);
+    close(fd);
+  }
+}
+
+static int
+mkpath (char *path, mode_t mode)
+{
+  char *c, *p;
+  int ret;
+
+  // To be consistent with dirname, these all imply '.' or '/',
+  // which must already exist
+  if (!path || !path[0] || !strcmp(path, "/")) {
+    return EEXIST;
+  }
+
+  if (!(p = strdup(path))) {
+    return ENOMEM;
+  }
+
+  // Grow the string one section at a time and mkdir
+  for (c = p+1; ; ++c) {
+    if (*c == '/') {
+      *c = '\0';
+      if (mkdir(p, mode) && errno != EEXIST) {
+        ret = errno;
+        break;
+      }
+      *c = '/';
+    } else if (*c == '\0') {
+      ret = mkdir(p, mode) ? errno : 0;
+      break;
+    }
+  }
+
+  free(p);
+  return ret;
+}
+
+
 int
 main (int argc, char **argv)
 {
-  int i, wid;
-
   struct timeval tv[2];
+  wid_t wid;
+  int i, rc;
 
   if (argc != 2) {
     fputs("Invalid number of arguments\n", stderr);
@@ -63,24 +145,84 @@ main (int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-//  slave_init();
-//  master_init();
-
-
-//void slave_init ()
-//{
-  ps_ctl_init();
-
-  // Create bogus "input" and "output" buffers (one per process for testing)
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    ps_ctl_add_file(i, "inputfile", BUFFER_SIZE);
-    ps_ctl_add_file(i, "outputfile", BUFFER_SIZE);
+  // Initialize MPI
+  int rank, ranks;
+  if (MPI_Init(&argc, &argv) != MPI_SUCCESS) {
+    fprintf(stderr, "Error initialize MPI.\n");
+    return EXIT_FAILURE;
   }
 
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+
+  // Slave Initialization
+  if (rank) {
+    // Create output directories
+    char *outdir = getenv("HSP_OUTDIR");
+    if (!outdir) {
+      outdir = "hspwrap-out";
+    }
+
+    // 2 slashes, 2 char dir, 10 char rank, 1 NUL
+    i = strlen(outdir) + 15;
+    char *workdir = malloc(i);
+    if (!workdir) {
+      fprintf(stderr, "Out of memory.\n");
+      return EXIT_FAILURE;
+    }
+
+    snprintf(workdir, i, "%s/%02d/%d", outdir, rank/100, rank);
+    if ((rc = mkpath(workdir, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH))) {
+      fprintf(stderr, "Could not create work directory: %s\n", strerror(rc));
+      return EXIT_FAILURE;
+    }
+      
+    // The output directory should exist, now change dir
+    if (chdir(workdir)) {
+      fprintf(stderr, "Could not change to work directory: %s\n", strerror(errno));
+    }
+
+    // Cleanup
+    free(workdir);
+
+    // Prepare process control structure and streaming SHMs
+    ps_ctl_init();
+
+    for (i = 0; i < ps_ctl->nprocesses; ++i) {
+      ps_ctl_add_file(i, "input", BUFFER_SIZE);
+      ps_ctl_add_file(i, "output", BUFFER_SIZE);
+    }
+  }
+
+  // Distribute DB files
+  MPI_Barrier(MPI_COMM_WORLD);
+  char *dbdir   = getenv("HSP_DBDIR");
+  char *dbfiles = strdup(getenv("HSP_DBFILES"));
+  char *fn, path[PATH_MAX];
+
+  for (fn = strtok(dbfiles, ":"); fn; fn = strtok(NULL, ":")) {
+    snprintf(path, sizeof(path), "%s/%s", dbdir, fn);    
+
+    broadcast_file(path, rank);
+  }
+  free(dbfiles);
+
+  // FIXME: The order of things is generally wrong. Should be:
+  // Fork Forker, MPI_Init, PS Ctl, EXE/DB distro, forking, main loop
+
   // Now print some stats
-  printf("Processes: %d\n", ps_ctl->nprocesses);
-  printf("Process ID: %d\n\n", getpid());
-//}
+  if (rank) {
+    MPI_Barrier(MPI_COMM_WORLD);
+    printf("Rank %d Processes: %d", rank, ps_ctl->nprocesses);
+    printf("  Process ID: %d", getpid());
+    printf("  Files: %d\n", ps_ctl->ft.nfiles);
+  } else {
+    printf("Ranks: %d\n\n", ranks);
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+
+  MPI_Finalize();
+  return 0;
 
   // Initial distribution
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
@@ -294,7 +436,7 @@ ps_ctl_init ()
 }
 
 
-static int
+static void *
 ps_ctl_add_file (wid_t wid, char *name, size_t sz)
 {
     void *shm;
@@ -317,7 +459,7 @@ ps_ctl_add_file (wid_t wid, char *name, size_t sz)
       fprintf(stderr, "Too many DB files; increase MAX_DB_FILES. Terminating.\n");
       exit(EXIT_FAILURE);
     }
-    return j;
+    return shm;
 }
 
 
