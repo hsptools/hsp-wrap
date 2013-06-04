@@ -498,10 +498,15 @@ slave_main (int slave_idx, int nslaves, char *cmd)
     pthread_mutex_unlock(&ps_ctl->lock);
 
     // Prefetch data if needed
-    no_work = !slave_request_work(&queue);
+    if (!no_work) {
+      no_work = !slave_request_work(&queue);
+    }
   }
 
   gettimeofday(tv+1, NULL);
+
+  // Waiting on all ranks to acknowledge the EXIT
+  MPI_Barrier(MPI_COMM_WORLD);
 
   // Dump output
   /*
