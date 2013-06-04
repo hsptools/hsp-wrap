@@ -332,6 +332,23 @@ get_command ()
 }
 
 
+static void
+update_wfiles_from_flush (struct WFILE *exclude)
+{
+  struct WFILE *wf;
+  int i;  
+  for (i=0; i < nIncludedWFILEs; ++i) {
+    wf = IncludedWFILEs[i];
+    // Check for flush
+    if (wf != exclude && wf->size > 0 && *wf->psize == 0) {
+      wf->offset += wf->size;
+      wf->size    = 0;
+      wf->pos     = wf->data;
+    }
+  }
+}
+
+
 static int
 wait_eod (struct WFILE *wf)
 {
@@ -351,6 +368,54 @@ wait_eod (struct WFILE *wf)
   switch (cmd) {
   case RUN:
     // More data, update WFILE and continue
+    wf->offset += wf->size;
+    wf->size    = *wf->psize;
+    wf->pos     = wf->data;
+    // Also, check output files to see if the size has been reduced (files are flushed)
+    update_wfiles_from_flush(wf);
+
+    ret = 1;
+    break;
+
+  case QUIT:
+    ret = 0;
+    break;
+
+  case SUSPEND:
+  case RESTORE:
+    fprintf(stderr, "stdiowrap: Suspend/Restore is not yet implemented\n");
+    exit(1);
+    break;
+  default:
+    fprintf(stderr, "stdiowrap: Unknown command from controller (%d). Exiting\n", cmd);
+    exit(1);
+    break;
+  }
+
+  pthread_mutex_unlock(&ps_ctl->lock);
+  return ret;
+}
+
+
+static int
+wait_nospace (struct WFILE *wf)
+{
+  enum process_cmd cmd;
+  int ret;
+
+  // Request service
+  pthread_mutex_lock(&ps_ctl->lock);
+  set_status(NOSPACE);
+  pthread_cond_signal(&ps_ctl->need_service);
+
+  while (get_command() == NO_CMD) {
+    pthread_cond_wait(&ps_ctl->process_ready[wid], &ps_ctl->lock);
+  }
+
+  cmd = get_command();
+  switch (cmd) {
+  case RUN:
+    // More space, update WFILE and continue
     wf->offset += wf->size;
     wf->size    = *wf->psize;
     wf->pos     = wf->data;
@@ -729,15 +794,28 @@ stdiowrap_fputs (const char *s, FILE *stream)
   MAP_WF_E(wf, stream, -1);
   const char *p = s;
 
-  // Copy bytes until end of string or no space avail
-  while (*p != '\0' && wf->pos < wf->data + wf->tsize) {
-    *(wf->pos++) = *(p++);
-  }
+  while (1) {
+    // Copy bytes until end of string or no space avail
+    while (*p != '\0' && wf->pos < wf->data + wf->tsize) {
+      *(wf->pos++) = *(p++);
+    }
 
-  // Didn't make it to end of string, space must be limited. Error.
-  if (*p != '\0') {
-    errno = ENOSPC;
-    return EOF;
+    // Didn't make it to end of string, request more space
+    if (*p != '\0') {
+      if (wait_nospace(wf)) {
+        // Got more space, resume
+        continue;
+      } else {
+        // Request denied, error
+        // FIXME: is setting to tsize correct now that we have offset?)
+        wf->size = wf->tsize;
+        *(wf->psize) = wf->size;
+        errno = ENOSPC;
+        return EOF;
+      }
+    }
+    // Done
+    break;
   }
 
   // Update sizes
@@ -758,8 +836,12 @@ stdiowrap_fputc (int c, FILE *stream)
 
   // Make sure there is room for a character to be written
   if (wf->pos >= (wf->data + wf->tsize)) {
-    errno = ENOSPC;
-    return EOF;
+    // Not enough, request more space
+    if (!wait_nospace(wf)) {
+      // Request denied, error
+      errno = ENOSPC;
+      return EOF;
+    }
   }
 
   // Write and update sizes
@@ -782,24 +864,38 @@ extern int
 stdiowrap_fprintf (FILE *stream, const char *format, ...)
 {
   va_list ap;
+  size_t  sz;
   int     wc;
   MAP_WF_E(wf, stream, -1);
-  
-  // Use vsnprintf() to directly write the data into the buffer
-  // respecting the max size.
-  va_start(ap, format);
-  wc = vsnprintf((char*)wf->pos,
-		 (unsigned long)((wf->data + wf->tsize) - wf->pos),
-		 format, ap);
-  va_end(ap);
 
-  // Check bounds
-  if (wc >= (unsigned long)((wf->data + wf->tsize) - wf->pos)) {
-    // The output was clipped as there wasn't enough room.
-    wf->size = wf->tsize;
-    wf->pos  = wf->data + wf->size;
-    *(wf->psize) = wf->size;
-    return wc;
+  while (1) {
+    // How much room remains?
+    sz = (wf->data + wf->tsize) - wf->pos;
+
+    // Use vsnprintf() to directly write the data into the buffer
+    // respecting the max size.
+    va_start(ap, format);
+    wc = vsnprintf((char*)wf->pos, sz, format, ap);
+    va_end(ap);
+
+    // Check bounds
+    if (wc < sz) {
+      break;
+    } 
+    // Not enough room, request a flush
+    if (wait_nospace(wf)) {
+      // File has room now, and pointers have been adjusted, retry
+      continue;
+    } else {
+      // Not getting new room for some reason, truncate output
+      // FIXME: is setting to tsize correct now that we have offset?)
+      wf->size = wf->tsize;
+      wf->pos  = wf->data + wf->size;
+      *(wf->psize) = wf->size;
+      // Return error
+      errno = ENOSPC;
+      return -1;
+    }
   }
 
   // Increase the recorded size of the data in the SHM
