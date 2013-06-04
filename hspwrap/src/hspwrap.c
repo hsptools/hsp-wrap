@@ -43,7 +43,7 @@ static int   ps_ctl_all_running ();
 static void *create_shm (char *name, long shmsz, int *fd);
 static void  broadcast_file(char *path, int rank);
 static int   mkpath (char *path, mode_t mode);
-static void  fetch_work (wid_t wid, char *data);
+static void  fetch_work (wid_t wid, char *data, size_t len);
 static void  fork_process_pool ();
 
 //// State
@@ -131,12 +131,409 @@ mkpath (char *path, mode_t mode)
   return ret;
 }
 
+// Tag for master messages
+#define TAG_WORKUNIT  0
+#define TAG_DATA      1
+#define TAG_MASTERCMD 2
+// Tag for slave messages
+#define TAG_REQUEST 3
+
+typedef uint32_t blockid_t;
+typedef uint16_t blockcnt_t;
+
+// Types of work units
+enum workunit_type {
+  WU_TYPE_EXIT,
+  WU_TYPE_DATA
+};
+
+
+enum request_type {
+  REQ_WORKUNIT,
+};
+
+struct workunit {
+  enum workunit_type type;
+  int                count;
+  int                len;
+  blockid_t          blk_id;
+};
+
+struct request {
+  enum request_type type;
+  int               count;
+};
+
+struct slave_info {
+  int rank;                   // Rank of this slave
+  int sflag;                  // Send flag 0: idle 1: in flight
+  struct request   request;   // The most recent request sent from this slave
+  struct workunit  workunit;  // Storage for work unit header on way to slave
+  char            *wu_data;   // Storage for work unit data
+};
+
+struct master_ctx {
+  struct slave_info  *slaves;         // Slave states
+  MPI_Request        *mpi_req;        // Outstanding MPI requests
+  MPI_Request        *mpi_send_wu;    // Outstanding MPI WU send
+  MPI_Request        *mpi_send_data;  // Outstanding MPI data send
+  int                 nslaves;        // Number of slaves
+};
+
+void
+master_wait_sends (struct master_ctx *ctx, int slave_idx)
+{
+  struct slave_info *s = &ctx->slaves[slave_idx];
+  if (s->sflag) {
+    // These should just return, but guarantee proper sequencing
+    MPI_Wait(&ctx->mpi_send_wu[slave_idx],   MPI_STATUS_IGNORE);
+    MPI_Wait(&ctx->mpi_send_data[slave_idx], MPI_STATUS_IGNORE);
+    s->sflag = 0;
+  }
+}
+
+
+int
+master_main (int nslaves)
+{
+  struct master_ctx ctx;
+  struct slave_info *s;
+  int wu_nseqs, rc, slave_idx, seq_idx, i;
+
+  // Init data structures
+  ctx.nslaves = nslaves;
+  ctx.slaves        = malloc(nslaves * sizeof(struct slave_info));
+  ctx.mpi_req       = malloc(nslaves * sizeof(MPI_Request));
+  ctx.mpi_send_wu   = malloc(nslaves * sizeof(MPI_Request));
+  ctx.mpi_send_data = malloc(nslaves * sizeof(MPI_Request));
+  
+  if (!ctx.slaves || !ctx.mpi_req ||
+      !ctx.mpi_send_wu || !ctx.mpi_send_data) {
+    fprintf(stderr, "master: failed to allocate room for state\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  for (i=0; i<nslaves; i++) {
+    ctx.slaves[i].rank = i+1;
+    ctx.slaves[i].sflag = 0;
+    ctx.slaves[i].wu_data = NULL;
+  }
+
+  // Load Query file
+  int nseqs = 10;
+  int max_nseqs = 2;
+
+  // Post a receive work request for each slave
+  for (i=0; i<nslaves; i++) {
+    rc = MPI_Irecv(&ctx.slaves[i].request, sizeof(struct request), MPI_BYTE,
+                   ctx.slaves[i].rank, TAG_REQUEST, MPI_COMM_WORLD,
+                   &ctx.mpi_req[i]);
+  }
+
+  // Hand out work units
+  for (seq_idx=0; seq_idx < nseqs; seq_idx += wu_nseqs) {
+    // Wait until any slave requests a work unit
+    MPI_Waitany(nslaves, ctx.mpi_req, &slave_idx, MPI_STATUSES_IGNORE);
+    s = &ctx.slaves[slave_idx];
+
+    fprintf(stderr, "Got some request from slave %d at rank %d\n", slave_idx, s->rank);
+
+    // Wait on our sends to complete if needed
+    master_wait_sends(&ctx, slave_idx);
+
+    // Got a request, service it
+    switch (s->request.type) {
+    case REQ_WORKUNIT:
+      // Figure out how many WUs to actually send (fair)
+      wu_nseqs = s->request.count;
+      if (wu_nseqs > max_nseqs) {
+        fprintf(stderr, "Slave %d requested %d units, limiting to %d.\n",
+                slave_idx, wu_nseqs, max_nseqs); 
+        wu_nseqs = max_nseqs;
+      } else {
+        fprintf(stderr, "Slave %d requested %d units.\n", slave_idx, wu_nseqs);
+      }
+
+
+      // Build data (and leak memory)
+      char *data = "Hello World!\n";
+      s->wu_data = malloc(strlen(data) * wu_nseqs);
+      s->wu_data[0] = '\0';
+      for (i=wu_nseqs; i; --i) {
+        strcat(s->wu_data, data);
+      }
+
+      // Prepare work unit for data
+      s->workunit.type   = WU_TYPE_DATA;
+      s->workunit.blk_id = seq_idx;
+      s->workunit.count  = wu_nseqs;
+      s->workunit.len    = strlen(s->wu_data); /*size of data in bytes*/;
+      
+      // Send work unit information
+      MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
+                TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_send_wu[slave_idx]);
+      // Send actual data
+      MPI_Isend(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
+                TAG_DATA, MPI_COMM_WORLD, &ctx.mpi_send_data[slave_idx]);
+      // Record that the the two MPI requests are valid so we can wait later
+      s->sflag = 1;
+      // Finally, re-post a receive for this rank
+      rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
+                     TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
+      break;
+
+    default:
+      // Unknown request
+      fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
+              s->rank);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  fprintf(stderr, "master: Done issuing jobs\n");
+
+  // TODO: Consider doing a waitany, then send the exit request immediately
+  // instead of waiting on *all* the ranks. Should allow ranks to start writing
+  // sooner, thus a chance of quicker shutdown
+  
+  // Done handing out units, wait for all slaves' final requests
+  MPI_Waitall(nslaves, ctx.mpi_req, MPI_STATUSES_IGNORE);
+  // Wait for all our previous sends
+  for (i=0; i<nslaves; ++i) {
+    master_wait_sends(&ctx, i);
+  }
+
+  // Tell all slaves to exit (maybe can be done slave-by-slave)
+  for (i=0; i<nslaves; ++i) {
+    s = &ctx.slaves[i];
+    s->workunit.type   = WU_TYPE_EXIT;
+    s->workunit.len    = 0;
+    s->workunit.blk_id = 0;
+    MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
+              TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_send_wu[slave_idx]);
+  }
+  // Wait on all exit sends to complete
+  MPI_Waitall(nslaves, ctx.mpi_send_wu, MPI_STATUSES_IGNORE);
+
+  // Waiting on all ranks to acknowledge the EXIT
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  fprintf(stderr, "master: All jobs complete, proceeding with shutdown\n");
+  return 0;
+}
+
+
+struct cache_buffer
+{
+  struct cache_buffer *next;
+  char *r_ptr;  // Current read pointer
+  size_t size;  // Size of the buffer
+  int count;    // Number of blocks in the buffer
+  int len;      // Length of valid data
+  char data[];  // The whole data buffer
+};
+
+
+int
+slave_request_work (struct cache_buffer **queue)
+{
+  struct cache_buffer *b, *tail;
+  struct request  req;
+  struct workunit wu;
+  int cnt;
+
+  // See how much data we have and find tail
+  for (cnt = 0, tail = NULL, b = *queue; b; b = b->next) {
+    fprintf(stderr, "Buffer count: %d\n", b->count);
+    cnt += b->count;
+    tail = b;
+  }
+  fprintf(stderr, "Total queue size: %d\n", cnt);
+
+  // request work units from master
+  req.type  = REQ_WORKUNIT;
+  req.count = ps_ctl->nprocesses - cnt;
+
+  MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
+           TAG_REQUEST, MPI_COMM_WORLD);
+  
+  // Read work unit information
+  MPI_Recv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
+           TAG_WORKUNIT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+  // Figure out what to do with the response
+  switch (wu.type) {
+  case WU_TYPE_EXIT:
+    return 0;
+
+  case WU_TYPE_DATA:
+    // Prepare buffer, and read data
+    b = malloc(sizeof(struct cache_buffer) + wu.len);
+    b->r_ptr = b->data;
+    b->size  = wu.len;
+    b->count = wu.count;
+    b->len   = wu.len;
+    b->next  = NULL;
+    MPI_Recv(b->data, wu.len, MPI_BYTE, 0,
+             TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // Add to end of queue
+    if (tail) {
+      tail->next = b;
+    } else {
+      *queue = b;
+    }
+    return b->count;
+
+  default:
+    fprintf(stderr, "slave: unknown work unit type from master. Exiting.\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+int
+slave_main (int slave_idx, int nslaves, char *cmd)
+{
+  struct cache_buffer *queue;
+
+  struct timeval tv[2];
+  int rc, no_work, i;
+  wid_t wid;
+
+  no_work = 0;
+
+  // Initial (empty) data
+  for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+    // Fetch work into buffers for worker wid (set FTE size and shm data)
+    fetch_work(wid, "", 0);
+
+    // Prepare process block
+    ps_ctl->process_state[wid] = RUNNING;
+    ps_ctl->process_cmd[wid]   = RUN;
+  }
+  
+  // Empty queue
+  queue = NULL;
+
+  // Consider reworking some of the logic here, especially if we add support
+  // for spawning processes one at a time. We could start processing, or at
+  // least cold-start the processes before receiving all the data.
+
+  // Process control is setup, data is in place, start the processes
+  fork_process_pool(cmd);
+  
+  fprintf(stderr, "Waiting for service requests.\n");
+
+  // Count number of tasks assigned to each worker
+  unsigned worker_iterations[MAX_PROCESSES];
+  ZERO_ARRAY(worker_iterations);
+
+  gettimeofday(tv+0, NULL);
+  while (1) {
+    pthread_mutex_lock(&ps_ctl->lock);
+    if (ps_ctl_all_done()) {
+      // All processes are done! exit loop
+      pthread_mutex_unlock(&ps_ctl->lock);
+      break;
+    }
+    // Otherwise, wait for a process to need service
+    while (ps_ctl_all_running()) {
+      pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
+    }
+
+    // Now, service all processes
+    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+      switch (ps_ctl->process_state[wid]) {
+      case EOD:
+        
+        // front buffer empty implies whole queue is empty
+        if (!no_work && queue == NULL) {
+          // No data in the buffer, must request now
+          no_work = !slave_request_work(&queue);
+        }
+
+        if (no_work) {
+          // No more data, tell it to quit
+          fprintf(stderr, "Requesting worker %d to quit\n", wid);
+          ps_ctl->process_cmd[wid] = QUIT;
+          ps_ctl->process_state[wid] = RUNNING;
+          pthread_cond_signal(&ps_ctl->process_ready[wid]);
+        } else {
+          // Handle data request locally
+          // Iterator code...
+          char *end  = strchr(queue->r_ptr, '\n') + 1;
+          off_t len  = end - queue->r_ptr;
+          fetch_work(wid, queue->r_ptr, len);
+          worker_iterations[wid]++;
+          ps_ctl->process_cmd[wid] = RUN;
+          ps_ctl->process_state[wid] = RUNNING;
+          pthread_cond_signal(&ps_ctl->process_ready[wid]);
+
+          // Now advance the iterator
+          queue->len -= len;
+          queue->count--;
+          // Advance to next buffer if needed
+          if (queue->count == 0) {
+            assert(queue->len == 0);
+            struct cache_buffer *n = queue->next;
+            free(queue);
+            queue = n;
+          }
+        }
+        break;
+      case NOSPACE:
+        fprintf(stderr, "PROCESS NO SPACE\n");
+      case FAILED:
+        fprintf(stderr, "PROCESS FAILED\n");
+        break;
+      case DONE:
+        break;
+      case IDLE:
+      case RUNNING:
+        // Not of interest, move on.
+        break;
+      }
+    }
+    // Done modifying process states
+    pthread_mutex_unlock(&ps_ctl->lock);
+
+    // Prefetch data if needed
+    no_work = !slave_request_work(&queue);
+  }
+
+  gettimeofday(tv+1, NULL);
+
+  // Dump output
+  /*
+  for (i=0; i<ps_ctl->ft.nfiles; ++i) {
+    struct file_table_entry *f = ps_ctl->ft.file + i;
+    if (!strcmp(f->name, "outputfile")) {
+      printf("%d: %zu\n", i, f->size);
+      fwrite(f->shm, 1, f->size, stdout);
+      putchar('\n');
+    }
+  }
+  */
+
+  long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
+           + (tv[1].tv_usec - tv[0].tv_usec);
+
+  putchar('\n');
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    printf("Worker %2u iterations: %5u\n", i, worker_iterations[i]);
+  }
+
+  printf("Time taken: %lfs (%lfms average)\n",
+      ((double)t) / 1000000.0,
+      ((double)t) * ps_ctl->nprocesses / NUM_JOBS);
+
+  return 0;
+}
+
 
 int
 main (int argc, char **argv)
 {
-  struct timeval tv[2];
-  wid_t wid;
   int i, rc;
 
   if (argc != 2) {
@@ -189,8 +586,8 @@ main (int argc, char **argv)
     ps_ctl_init();
 
     for (i = 0; i < ps_ctl->nprocesses; ++i) {
-      ps_ctl_add_file(i, "input", BUFFER_SIZE);
-      ps_ctl_add_file(i, "output", BUFFER_SIZE);
+      ps_ctl_add_file(i, "inputfile", BUFFER_SIZE);
+      ps_ctl_add_file(i, "outputfile", BUFFER_SIZE);
     }
   }
 
@@ -221,106 +618,15 @@ main (int argc, char **argv)
     MPI_Barrier(MPI_COMM_WORLD);
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  if (rank) {
+    slave_main(rank, ranks-1, argv[1]);
+  } else {
+    master_main(ranks-1);
+  }
+
   MPI_Finalize();
-  return 0;
-
-  // Initial distribution
-  for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-    // Fetch work into buffers for worker wid (set FTE size and shm data)
-    fetch_work(wid, "Hello World!\n");
-
-    // Prepare process block
-    ps_ctl->process_state[wid] = RUNNING;
-    ps_ctl->process_cmd[wid]   = RUN;
-  }
-
-  // Process control is setup, data is in place, start the processes
-  fork_process_pool(argv[1]);
-  
-  fprintf(stderr, "Waiting for service requests.\n");
-
-  // Count number of tasks assigned to each worker
-  unsigned worker_iterations[MAX_PROCESSES];
-  ZERO_ARRAY(worker_iterations);
-
-  gettimeofday(tv+0, NULL);
-  i=NUM_JOBS;
-  while (1) {
-    pthread_mutex_lock(&ps_ctl->lock);
-    if (ps_ctl_all_done()) {
-      // All processes are done! exit loop
-      pthread_mutex_unlock(&ps_ctl->lock);
-      break;
-    }
-    // Otherwise, wait for a process to need service
-    while (ps_ctl_all_running()) {
-      pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
-    }
-
-    // Now, service all processes
-    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-      switch (ps_ctl->process_state[wid]) {
-      case EOD:
-        if (i) {
-          // Still have data to distribute
-          worker_iterations[wid]++;
-          fetch_work(wid, "That's all folks!\n");
-          // TODO: Move process_* changes to fetch_work(); ?
-          ps_ctl->process_cmd[wid] = RUN;
-          ps_ctl->process_state[wid] = RUNNING;
-          pthread_cond_signal(&ps_ctl->process_ready[wid]);
-          i--;
-        } else {
-          // No more data, tell it to quit
-          fprintf(stderr, "Requesting worker %d to quit\n", wid);
-          ps_ctl->process_cmd[wid] = QUIT;
-          ps_ctl->process_state[wid] = RUNNING;
-          pthread_cond_signal(&ps_ctl->process_ready[wid]);
-        }
-        break;
-      case NOSPACE:
-        fprintf(stderr, "PROCESS NO SPACE\n");
-      case FAILED:
-        fprintf(stderr, "PROCESS FAILED\n");
-        break;
-      case DONE:
-        break;
-      case IDLE:
-      case RUNNING:
-        // Not of interest, move on.
-        break;
-      }
-    }
-    // Done modifying process states
-    pthread_mutex_unlock(&ps_ctl->lock);
-  }
-
-  gettimeofday(tv+1, NULL);
-
-  // Dump output
-  /*
-  for (i=0; i<ps_ctl->ft.nfiles; ++i) {
-    struct file_table_entry *f = ps_ctl->ft.file + i;
-    if (!strcmp(f->name, "outputfile")) {
-      printf("%d: %zu\n", i, f->size);
-      fwrite(f->shm, 1, f->size, stdout);
-      putchar('\n');
-    }
-  }
-  */
-
-  long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
-           + (tv[1].tv_usec - tv[0].tv_usec);
-
-  putchar('\n');
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    printf("Worker %2u iterations: %5u\n", i, worker_iterations[i]);
-  }
-
-  printf("Time taken: %lfs (%lfms average)\n",
-      ((double)t) / 1000000.0,
-      ((double)t) * ps_ctl->nprocesses / NUM_JOBS);
-
   return 0;
 }
 
@@ -490,20 +796,19 @@ ps_ctl_all_running ()
 
 
 static void
-fetch_work (wid_t wid, char *data)
+fetch_work (wid_t wid, char *data, size_t len)
 {
   int i;
   struct file_table *ft;
   struct file_table_entry *f;
-  size_t cnt = strlen(data);
 
   ft = &ps_ctl->ft;
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
     if (f->wid == wid && !strcmp(f->name, "inputfile")) {
       // Prepare data buffer(s)
-      memcpy(f->shm, data, cnt);
-      f->size = cnt;
+      memcpy(f->shm, data, len);
+      f->size = len;
     }
   }
 }
