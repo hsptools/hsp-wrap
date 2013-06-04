@@ -23,7 +23,7 @@
 #include "process_pool.h"
 
 #define NUM_PROCS      2
-#define NUM_JOBS       10
+#define NUM_JOBS       1000000
 #define BUFFER_SIZE    (1L<<20)
 
 // TODO: Move to util lib
@@ -184,8 +184,12 @@ struct master_ctx {
 struct writer_ctx {
   char   *buf;                       // Output buffer
   char   *ptr;                       // Current pointer for writer
-  size_t  size;                      // Total size of the buffer
+  size_t  size;                      // Total size of either buffer
   size_t  avail;                     // How much free space?
+
+  char   *back_buf;                  // Back buffer (where we flush from)
+  size_t  back_len;                  // Length of valid data in back buffer
+
   pthread_t       thread;
   pthread_mutex_t lock;              // Lock for entire context
   pthread_cond_t  space_avail;       // Signal to slave that there is space
@@ -266,7 +270,7 @@ master_main (int nslaves)
 
 
       // Build data (and leak memory)
-      char *data = "Hello World!\n";
+      char *data = "Hello World!!!\n";
       s->wu_data = malloc(strlen(data) * wu_nseqs);
       s->wu_data[0] = '\0';
       for (i=wu_nseqs; i; --i) {
@@ -341,12 +345,17 @@ writer_main (void *arg)
   while (1) {
     // Flush if buffer is at least half full
     pthread_mutex_lock(&ctx->lock);
+    // TODO: maybe move this check to the pull function, so we don't have so many spurious wakeups
+    // TODO: double-buffer instead of half-size shit
     while (ctx->avail > ctx->size/2) {
       pthread_cond_wait(&ctx->data_avail, &ctx->lock);
     }
-    fprintf(stderr, "OH BOY!\n");
 
     // TODO: Write the actual data
+    fprintf(stderr, "Flushing: %zu / %zu bytes\n", ctx->avail, ctx->size);
+    ctx->avail = ctx->size;
+    ctx->ptr   = ctx->buf;
+
     pthread_mutex_unlock(&ctx->lock);
     
     // Inform slaves that there is room now
@@ -905,7 +914,7 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
     if (f->wid == wid && !strcmp(f->name, "outputfile")) {
-      fprintf(stderr, "trimming output. (%zu bytes)\n", f->size);
+      //fprintf(stderr, "trimming output. (%zu bytes)\n", f->size);
       
       // Make sure we have enough room to write the data
       pthread_mutex_lock(&ctx->lock);
@@ -915,6 +924,8 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
 
       // .. and write it
       memcpy(ctx->ptr, f->shm, f->size);
+      ctx->ptr   += f->size;
+      ctx->avail -= f->size;
       pthread_mutex_unlock(&ctx->lock);
       pthread_cond_signal(&ctx->data_avail);
 
