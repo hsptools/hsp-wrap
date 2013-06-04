@@ -45,10 +45,10 @@ static void  broadcast_file(char *path, int rank);
 static int   mkpath (char *path, mode_t mode);
 static void  fork_process_pool ();
 static void  push_work (wid_t wid, char *data, size_t len);
-static void  pull_results (wid_t wid);
 
 //// State
 
+struct writer_ctx writer;
 struct process_control *ps_ctl;
 int ps_ctl_fd;
 
@@ -155,31 +155,44 @@ enum request_type {
 
 struct workunit {
   enum workunit_type type;
-  int                count;
-  int                len;
+  uint32_t           count;
+  uint32_t           len;
   blockid_t          blk_id;
 };
 
 struct request {
-  enum request_type type;
-  int               count;
+  enum request_type  type;
+  uint32_t           count;
 };
 
 struct slave_info {
-  int rank;                   // Rank of this slave
-  int sflag;                  // Send flag 0: idle 1: in flight
-  struct request   request;   // The most recent request sent from this slave
-  struct workunit  workunit;  // Storage for work unit header on way to slave
-  char            *wu_data;   // Storage for work unit data
+  int rank;                    // Rank of this slave
+  int sflag;                   // Send flag 0: idle 1: in flight
+  struct request     request;  // The most recent request sent from this slave
+  struct workunit    workunit; // Storage for work unit header on way to slave
+  char              *wu_data;  // Storage for work unit data
 };
 
 struct master_ctx {
-  struct slave_info  *slaves;         // Slave states
-  MPI_Request        *mpi_req;        // Outstanding MPI requests
-  MPI_Request        *mpi_send_wu;    // Outstanding MPI WU send
-  MPI_Request        *mpi_send_data;  // Outstanding MPI data send
-  int                 nslaves;        // Number of slaves
+  struct slave_info *slaves;         // Slave states
+  MPI_Request       *mpi_req;        // Outstanding MPI requests
+  MPI_Request       *mpi_send_wu;    // Outstanding MPI WU send
+  MPI_Request       *mpi_send_data;  // Outstanding MPI data send
+  int                nslaves;        // Number of slaves
 };
+
+struct writer_ctx {
+  char   *buf;                       // Output buffer
+  char   *ptr;                       // Current pointer for writer
+  size_t  size;                      // Total size of the buffer
+  size_t  avail;                     // How much free space?
+  pthread_t       thread;
+  pthread_mutex_t lock;              // Lock for entire context
+  pthread_cond_t  space_avail;       // Signal to slave that there is space
+  pthread_cond_t  data_avail;        // Signal to writer that there is data
+};
+
+static void pull_results (struct writer_ctx *w, wid_t wid);
 
 void
 master_wait_sends (struct master_ctx *ctx, int slave_idx)
@@ -320,6 +333,48 @@ master_main (int nslaves)
 }
 
 
+static void *
+writer_main (void *arg)
+{
+  struct writer_ctx *ctx = arg;
+
+  while (1) {
+    // Flush if buffer is at least half full
+    pthread_mutex_lock(&ctx->lock);
+    while (ctx->avail > ctx->size/2) {
+      pthread_cond_wait(&ctx->data_avail, &ctx->lock);
+    }
+    fprintf(stderr, "OH BOY!\n");
+
+    // TODO: Write the actual data
+    pthread_mutex_unlock(&ctx->lock);
+    
+    // Inform slaves that there is room now
+    pthread_cond_signal(&ctx->space_avail);
+
+    // TODO: proper exit condition
+  }
+  
+  // TODO: Flush everything that is left
+}
+
+
+static int
+start_writer (struct writer_ctx *ctx)
+{
+  // TODO: error checking
+  ctx->size  = BUFFER_SIZE * NUM_PROCS;
+  ctx->avail = ctx->size;
+  ctx->buf   = malloc(ctx->size);
+  ctx->ptr   = ctx->buf;
+
+  pthread_mutex_init(&ctx->lock, NULL);
+  pthread_cond_init(&ctx->data_avail, NULL);
+  pthread_cond_init(&ctx->space_avail, NULL);
+  pthread_create(&ctx->thread, NULL, writer_main, ctx);
+}
+
+
 struct cache_buffer
 {
   struct cache_buffer *next;
@@ -339,15 +394,11 @@ slave_request_work (struct cache_buffer **queue)
   struct workunit wu;
   int cnt;
 
-  /*
   // See how much data we have and find tail
   for (cnt = 0, tail = NULL, b = *queue; b; b = b->next) {
-    fprintf(stderr, "Buffer count: %d\n", b->count);
     cnt += b->count;
     tail = b;
   }
-  fprintf(stderr, "Total queue size: %d\n", cnt);
-  */
 
   // request work units from master
   req.type  = REQ_WORKUNIT;
@@ -401,6 +452,11 @@ slave_main (int slave_idx, int nslaves, char *cmd)
 
   no_work = 0;
 
+  // TODO: Maybe move some stuff to a slave_init() function
+  
+  // Spawn and initialize writer thread
+  start_writer(&writer);
+
   // Initial (empty) data
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
     // Fetch work into buffers for worker wid (set FTE size and shm data)
@@ -451,15 +507,10 @@ slave_main (int slave_idx, int nslaves, char *cmd)
         }
 
         // Preemptively flush the results while the processes is stopped
-        //pull_results(wid);
+        // FIXME: Don't do this if this is the initial EOD (first request for data)
+        pull_results(&writer, wid);
 
-        if (no_work) {
-          // No more data, tell it to quit
-          fprintf(stderr, "Requesting worker %d to quit\n", wid);
-          ps_ctl->process_cmd[wid] = QUIT;
-          ps_ctl->process_state[wid] = RUNNING;
-          pthread_cond_signal(&ps_ctl->process_ready[wid]);
-        } else {
+        if (queue != NULL) {
           // Handle data request locally
           // Iterator code...
           char *end  = strchr(queue->r_ptr, '\n') + 1;
@@ -480,7 +531,13 @@ slave_main (int slave_idx, int nslaves, char *cmd)
             free(queue);
             queue = n;
           }
-        }
+        } else if (no_work) {
+          // No more data, tell it to quit
+          fprintf(stderr, "Requesting worker %d to quit\n", wid);
+          ps_ctl->process_cmd[wid] = QUIT;
+          ps_ctl->process_state[wid] = RUNNING;
+          pthread_cond_signal(&ps_ctl->process_ready[wid]);
+        } 
         break;
 
       case NOSPACE:
@@ -488,7 +545,8 @@ slave_main (int slave_idx, int nslaves, char *cmd)
         // FIXME: This will result in fragmentation of the output data
         // we need to maintain an index so output can be pieced back in
         // proper order by the 'gather' script
-        //pull_results(wid);
+        pull_results(&writer, wid);
+        fprintf(stderr, "Buffer almost overflowed, result data is probably interleaved\n");
         ps_ctl->process_cmd[wid] = RUN;
         ps_ctl->process_state[wid] = RUNNING;
         pthread_cond_signal(&ps_ctl->process_ready[wid]);
@@ -499,7 +557,6 @@ slave_main (int slave_idx, int nslaves, char *cmd)
         break;
       case DONE:
         //fprintf(stderr, "PROCESS DONE\n");
-        //pull_results(wid);
         break;
       case IDLE:
       case RUNNING:
@@ -517,6 +574,11 @@ slave_main (int slave_idx, int nslaves, char *cmd)
   }
 
   gettimeofday(tv+1, NULL);
+
+  // Flush last bit of data
+  for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+    pull_results(&writer, wid);
+  }
 
   // Waiting on all ranks to acknowledge the EXIT
   MPI_Barrier(MPI_COMM_WORLD);
@@ -833,7 +895,7 @@ push_work (wid_t wid, char *data, size_t len)
 
 
 static void
-pull_results (wid_t wid)
+pull_results (struct writer_ctx *ctx, wid_t wid)
 {
   int i;
   struct file_table *ft;
@@ -843,7 +905,20 @@ pull_results (wid_t wid)
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
     if (f->wid == wid && !strcmp(f->name, "outputfile")) {
-      fprintf(stderr, "trimming output.\n");
+      fprintf(stderr, "trimming output. (%zu bytes)\n", f->size);
+      
+      // Make sure we have enough room to write the data
+      pthread_mutex_lock(&ctx->lock);
+      while (ctx->avail < f->size) {
+        pthread_cond_wait(&ctx->space_avail, &ctx->lock);
+      }
+
+      // .. and write it
+      memcpy(ctx->ptr, f->shm, f->size);
+      pthread_mutex_unlock(&ctx->lock);
+      pthread_cond_signal(&ctx->data_avail);
+
+      // Mark buffer as empty
       f->size = 0;
     }
   }
