@@ -190,10 +190,12 @@ struct writer_ctx {
   char   *back_buf;                  // Back buffer (where we flush from)
   size_t  back_len;                  // Length of valid data in back buffer
 
+  int     running;                   // 1: keep running, 0: exit main loop
+
   pthread_t       thread;
   pthread_mutex_t lock;              // Lock for entire context
   pthread_cond_t  space_avail;       // Signal to slave that there is space
-  pthread_cond_t  data_avail;        // Signal to writer that there is data
+  pthread_cond_t  data_pending;      // Signal to writer that there is data
 };
 
 static void pull_results (struct writer_ctx *w, wid_t wid);
@@ -342,29 +344,47 @@ writer_main (void *arg)
 {
   struct writer_ctx *ctx = arg;
 
-  while (1) {
+  int fd;
+  // TODO: Consider O_NONBLOCK or O_SYNC
+  fd = open("output", O_WRONLY | O_CREAT | O_EXCL, S_IRWXU |S_IRGRP | S_IROTH);
+  if (fd == -1) {
+    fprintf(stderr, "writer: Could not open output file\n");
+    exit(EXIT_FAILURE);
+  }
+
+  while (ctx->running) {
     // Flush if buffer is at least half full
     pthread_mutex_lock(&ctx->lock);
-    // TODO: maybe move this check to the pull function, so we don't have so many spurious wakeups
-    // TODO: double-buffer instead of half-size shit
-    while (ctx->avail > ctx->size/2) {
-      pthread_cond_wait(&ctx->data_avail, &ctx->lock);
+    // FIXME: this isn't the best waiting condition...
+    while (ctx->running && ctx->avail > ctx->size/2) {
+      pthread_cond_wait(&ctx->data_pending, &ctx->lock);
     }
 
-    // TODO: Write the actual data
-    fprintf(stderr, "Flushing: %zu / %zu bytes\n", ctx->avail, ctx->size);
-    ctx->avail = ctx->size;
-    ctx->ptr   = ctx->buf;
+    // Swap buffers
+    char *tmp     = ctx->buf;
+    ctx->buf      = ctx->back_buf;
+    ctx->back_buf = tmp;
+    ctx->back_len = ctx->size - ctx->avail;
+    ctx->avail    = ctx->size;
+    ctx->ptr      = ctx->buf;
 
+    // Done with public state, unlock and signal completion
     pthread_mutex_unlock(&ctx->lock);
-    
-    // Inform slaves that there is room now
     pthread_cond_signal(&ctx->space_avail);
 
-    // TODO: proper exit condition
+    // Now, actually write the output file
+    ssize_t bytes = write(fd, ctx->back_buf, ctx->back_len);
+    if (bytes == -1) {
+      fprintf(stderr, "Couldn't write output: %s\n", strerror(errno));
+    } else {
+      fprintf(stderr, "Wrote %zd of %zu bytes\n", bytes, ctx->back_len);
+    }
+    fsync(fd);
+    ctx->back_len = 0;
   }
-  
-  // TODO: Flush everything that is left
+
+  close(fd);
+  return 0;
 }
 
 
@@ -376,11 +396,20 @@ start_writer (struct writer_ctx *ctx)
   ctx->avail = ctx->size;
   ctx->buf   = malloc(ctx->size);
   ctx->ptr   = ctx->buf;
+  ctx->back_buf = malloc(ctx->size);
+  ctx->back_len = 0;
+  ctx->running  = 1;
+
+  if (!ctx->buf || !ctx->back_buf) {
+    fprintf(stderr, "writer: Could not allocate buffers\n");
+    exit(EXIT_FAILURE);
+  }
 
   pthread_mutex_init(&ctx->lock, NULL);
-  pthread_cond_init(&ctx->data_avail, NULL);
+  pthread_cond_init(&ctx->data_pending, NULL);
   pthread_cond_init(&ctx->space_avail, NULL);
   pthread_create(&ctx->thread, NULL, writer_main, ctx);
+  return 0;
 }
 
 
@@ -588,6 +617,12 @@ slave_main (int slave_idx, int nslaves, char *cmd)
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
     pull_results(&writer, wid);
   }
+
+  // Join with writer thread
+  writer.running = 0;
+  pthread_cond_signal(&writer.data_pending);
+  pthread_join(writer.thread, NULL);
+  fprintf(stderr, "Writer thread successfully exited\n");
 
   // Waiting on all ranks to acknowledge the EXIT
   MPI_Barrier(MPI_COMM_WORLD);
@@ -918,6 +953,9 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
       
       // Make sure we have enough room to write the data
       pthread_mutex_lock(&ctx->lock);
+      if (ctx->avail < f->size) {
+        pthread_cond_signal(&ctx->data_pending);
+      }
       while (ctx->avail < f->size) {
         pthread_cond_wait(&ctx->space_avail, &ctx->lock);
       }
@@ -927,7 +965,6 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
       ctx->ptr   += f->size;
       ctx->avail -= f->size;
       pthread_mutex_unlock(&ctx->lock);
-      pthread_cond_signal(&ctx->data_avail);
 
       // Mark buffer as empty
       f->size = 0;
