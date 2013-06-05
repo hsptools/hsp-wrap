@@ -14,7 +14,7 @@
 #define WORKER_ID_ENVVAR "HSPWRAP_WID"
 
 // TODO: We can probably remove this with a better N:M mapping for files
-typedef uint16_t wid_t;
+typedef int16_t wid_t;
 #define PRI_WID PRIu16
 #define SCN_WID SCNu16
 #define BAD_WID 0xFFFF

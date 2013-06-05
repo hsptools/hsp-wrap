@@ -109,7 +109,7 @@ fork_worker (wid_t wid, char *exe)
     snprintf(env[0], ARRAY_SIZE(env[0]), PID_ENVVAR "=%d", hspwrap_pid);
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
-    if (execle(exe, "test", "outputfile", "inputfile", NULL, env_list)) {
+    if (execle(exe, "test", "outputfile", "inputfile", "./wscript", NULL, env_list)) {
       fputs("Could not exec: ",stderr);
       fputs(strerror(errno),stderr);
       fputc('\n',stderr);

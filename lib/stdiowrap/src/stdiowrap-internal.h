@@ -24,6 +24,8 @@ struct WFILE {
   unsigned char *pos;     // Current cursor position in data segment
 
   off_t          offset;  // Offset of current data-segment from beginning of file
+
+  int            is_stream; // Is this a stream (can we poll for more data)?
 };
 
 

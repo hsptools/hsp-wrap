@@ -116,10 +116,10 @@ fill_WFILE_data_SHM (struct WFILE *wf)
     struct file_table_entry *f = ps_ctl->ft.file + i;
 
     // FIXME SEGFAULT?!?!? FIXME
-    if (!strcmp(f->name, wf->name) && f->wid == wid) {
+    if (!strcmp(f->name, wf->name) && (f->wid == wid || f->wid == -1)) {
       char  shmname[256];
 
-      //fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
+      fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
 
       snprintf(shmname, 256, "/mcw.%d.%d", hspwrap_pid, i);
       int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -136,6 +136,7 @@ fill_WFILE_data_SHM (struct WFILE *wf)
       wf->size  = f->size;
       wf->tsize = f->shm_size;
       wf->psize = &(f->size);
+      wf->is_stream = (f->wid != -1);
       // We are done; return
       return 0;
     }
@@ -354,6 +355,11 @@ wait_eod (struct WFILE *wf)
 {
   enum process_cmd cmd;
   int ret;
+
+  // Not a stream, don't even try!
+  if (!wf->is_stream) {
+    return 0;
+  }
 
   // Request service
   pthread_mutex_lock(&ps_ctl->lock);

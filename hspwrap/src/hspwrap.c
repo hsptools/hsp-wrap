@@ -22,8 +22,8 @@
 
 #include "process_pool.h"
 
-#define NUM_PROCS      2
-#define NUM_JOBS       1000000
+#define NUM_PROCS      1
+#define NUM_JOBS       200
 #define BUFFER_SIZE    (1L<<20)
 
 // TODO: Move to util lib
@@ -627,18 +627,6 @@ slave_main (int slave_idx, int nslaves, char *cmd)
   // Waiting on all ranks to acknowledge the EXIT
   MPI_Barrier(MPI_COMM_WORLD);
 
-  // Dump output
-  /*
-  for (i=0; i<ps_ctl->ft.nfiles; ++i) {
-    struct file_table_entry *f = ps_ctl->ft.file + i;
-    if (!strcmp(f->name, "outputfile")) {
-      printf("%d: %zu\n", i, f->size);
-      fwrite(f->shm, 1, f->size, stdout);
-      putchar('\n');
-    }
-  }
-  */
-
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
            + (tv[1].tv_usec - tv[0].tv_usec);
 
@@ -736,7 +724,11 @@ main (int argc, char **argv)
     MPI_Barrier(MPI_COMM_WORLD);
     printf("Rank %d Processes: %d", rank, ps_ctl->nprocesses);
     printf("  Process ID: %d", getpid());
-    printf("  Files: %d\n", ps_ctl->ft.nfiles);
+    printf("  Files: %d (", ps_ctl->ft.nfiles);
+    for (i=0; i<ps_ctl->ft.nfiles; ++i) {
+      printf("%s, ", ps_ctl->ft.file[i].name);
+    }
+    puts(")");
   } else {
     printf("Ranks: %d\n\n", ranks);
     MPI_Barrier(MPI_COMM_WORLD);
@@ -881,7 +873,7 @@ ps_ctl_add_file (wid_t wid, char *name, size_t sz)
       ps_ctl->ft.file[j].shm_fd   = fd;
       ps_ctl->ft.file[j].shm_size = sz;
       ps_ctl->ft.file[j].wid      = wid;
-      ps_ctl->ft.file[j].size     = 0;
+      ps_ctl->ft.file[j].size     = (wid == -1) ? sz : 0;
       strcpy(ps_ctl->ft.file[j].name, name);
 
       ps_ctl->ft.nfiles++;
