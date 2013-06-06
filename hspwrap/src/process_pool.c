@@ -18,7 +18,7 @@
 // Linux-specific (TODO: make configurable)
 #include <sched.h>
 
-#include <hsp/process-control.h>
+#include <hsp/process_control.h>
 #include "process_pool.h"
 
 // TODO: Move to util lib
@@ -32,7 +32,7 @@ struct worker_process {
 };
 
 static wid_t  worker_for_pid (pid_t pid);
-static int    fork_worker (wid_t wid, char *exe);
+static int    fork_worker (wid_t wid, const char *exe);
 
 //// State
 
@@ -96,7 +96,7 @@ worker_for_pid (pid_t pid)
 
 
 int
-fork_worker (wid_t wid, char *exe)
+fork_worker (wid_t wid, const char *exe)
 {
   char env[2][40];
   char *env_list[3] = {env[0], env[1], NULL};
@@ -109,7 +109,7 @@ fork_worker (wid_t wid, char *exe)
     snprintf(env[0], ARRAY_SIZE(env[0]), PID_ENVVAR "=%d", hspwrap_pid);
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
-    if (execle(exe, "test", "outputfile", "inputfile", "./wscript", NULL, env_list)) {
+    if (execle(exe, "test", "outputfile", "inputfile", "./README", NULL, env_list)) {
       fputs("Could not exec: ",stderr);
       fputs(strerror(errno),stderr);
       fputc('\n',stderr);
@@ -135,7 +135,7 @@ fork_worker (wid_t wid, char *exe)
 
 
 int
-process_pool_start (pid_t wrapper_pid, int nproc, char *cmd)
+process_pool_start (pid_t wrapper_pid, int nproc, const char *cmd)
 {
   struct process_control *ps_ctl = NULL;
 
@@ -151,7 +151,7 @@ process_pool_start (pid_t wrapper_pid, int nproc, char *cmd)
   {
     char shmname[256];
     int fd;
-    snprintf(shmname, 256, "/mcw.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
+    snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
     fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
     struct stat st;

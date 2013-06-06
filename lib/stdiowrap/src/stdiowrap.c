@@ -72,7 +72,7 @@ init_SHM ()
     parse_env(&hspwrap_pid, PID_ENVVAR, "%d");
     parse_env(&wid, WORKER_ID_ENVVAR, "%" SCN_WID);
 
-    snprintf(shmname, 256, "/mcw.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
+    snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
     fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
     
     // The file descriptors for the SHMs will already be available to
@@ -121,7 +121,7 @@ fill_WFILE_data_SHM (struct WFILE *wf)
 
       fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
 
-      snprintf(shmname, 256, "/mcw.%d.%d", hspwrap_pid, i);
+      snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, i);
       int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
       
       // Attach the shared memory segment

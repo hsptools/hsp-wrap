@@ -2,6 +2,7 @@
 
 def build(bld):
     src = '''
+    src/process_control.c
     '''
 
     ## user libraries

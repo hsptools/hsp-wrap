@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#include <hsp/process-control.h>
+#include <hsp/process_control.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal to stdiowrap.c

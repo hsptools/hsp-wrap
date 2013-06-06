@@ -73,7 +73,7 @@ enum process_cmd {
  * Shared process control structure.  Layout of SHM.
  */
 struct process_control {
-  int   nprocesses;               // Number of processes
+  unsigned nprocesses;               // Number of processes
 
   // Between input layer and processes
   pthread_mutex_t    lock;
@@ -89,5 +89,11 @@ struct process_control {
 
   struct file_table ft;            // File descriptors
 };
+
+
+struct process_control *ps_ctl_init (unsigned nprocesses, int *fd);
+void *ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid, const char *name, size_t sz);
+int   ps_ctl_all_done (struct process_control *ps_ctl);
+int   ps_ctl_all_running (struct process_control *ps_ctl);
 
 #endif // HSP_PROCESS_CONTROL_H__
