@@ -10,7 +10,7 @@
 #include "master.h"
 #include "slave.h"
 
-#define NUM_PROCS      1
+#define NUM_PROCS      2
 
 int
 main (int argc, char **argv)
@@ -89,13 +89,37 @@ main (int argc, char **argv)
 
 
 // Line-based iterator
+static char *
+iter_line_next (char *s, char *e, char *i)
+{
+  char *c = i;
+  for (c=i; c<e; ++c) {
+    if (*c == '\n') {
+      return c+1;
+    }
+  }
+  return e;
+}
+
+// FASTA sequence iterator
+static char *
+iter_fasta_next (char *s, char *e, char *i)
+{
+  char last_c = ' ';
+  char *c = i;
+
+  for (c=i; c<e; ++c) {
+    if (*c == '>' && last_c == '\n') {
+      return c;
+    }
+    last_c = *c;
+  }
+  return e;
+}
+
+// Current iterator
 char *
 iter_next (char *s, char *e, char *i)
 {
-  char *c = strchr(i, '\n');
-  if (!c) {
-    return e;
-  } else {
-    return c + 1;
-  }
+  return iter_fasta_next(s, e, i);
 }
