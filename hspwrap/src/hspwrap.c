@@ -32,10 +32,18 @@ main (int argc, char **argv)
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &ranks);
 
+  // Initialize our state
   if (rank) {
     slave_init(rank, ranks-1, NUM_PROCS);
   } else {
     master_init();
+  }
+
+  // Broadcast binary files first
+  if (rank) {
+    slave_broadcast_work_file("exefile");
+  } else {
+    master_broadcast_file(getenv("HSP_EXEFILE"));
   }
 
   // Distribute DB files
@@ -48,7 +56,7 @@ main (int argc, char **argv)
     snprintf(path, sizeof(path), "%s/%s", dbdir, fn);    
 
     if (rank) {
-      slave_broadcast_file(path);
+      slave_broadcast_shared_file(path);
     } else {
       master_broadcast_file(path);
     }
@@ -58,8 +66,8 @@ main (int argc, char **argv)
   // FIXME: The order of things is generally wrong. Should be:
   // Fork Forker, MPI_Init, PS Ctl, EXE/DB distro, forking, main loop
 
-  // Now print some stats
 #if 0
+  // Now print some stats
   if (rank) {
     MPI_Barrier(MPI_COMM_WORLD);
     printf("Rank %d Processes: %d", rank, ps_ctl->nprocesses);

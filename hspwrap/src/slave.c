@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -88,7 +89,7 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
 
 
 void
-slave_broadcast_file(const char *path)
+slave_broadcast_shared_file(const char *path)
 {
   void  *data;
   size_t sz;
@@ -101,6 +102,41 @@ slave_broadcast_file(const char *path)
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
 }
 
+
+void
+slave_broadcast_work_file(const char *path)
+{
+  void  *data;
+  size_t sz;
+  int    fd;
+
+  // Get file size
+  MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  // Create file and size it
+  if ((fd = open(path, O_CREAT | O_EXCL | O_RDWR,
+                 S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)) == -1) {
+    fprintf(stderr, "%s: Could not create file for writing: %s\n", path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  if ((ftruncate(fd, sz)) != 0) {
+    fprintf(stderr, "%s: Failed to resize output file: %s\n", path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  // mmap, and write data
+  data = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
+  if (data == MAP_FAILED) {
+    close(fd);
+    fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  // unmap and such
+  munmap(data, sz);
+  close(fd);
+}
 
 
 int
