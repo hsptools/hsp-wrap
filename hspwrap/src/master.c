@@ -13,8 +13,6 @@
 #include "hspwrap.h"
 #include "master.h"
 
-#define NUM_JOBS 5000
-
 struct slave_info {
   int rank;                    // Rank of this slave
   int sflag;                   // Send flag 0: idle 1: in flight
@@ -84,7 +82,17 @@ master_main (int nslaves)
 {
   struct master_ctx ctx;
   struct slave_info *s;
-  int wu_nseqs, rc, slave_idx, seq_idx, i;
+
+  char        *in_path;
+  int          in_fd;
+  struct stat  in_st;
+  char        *in_data;
+  size_t       in_size;
+  unsigned     in_cnt;
+
+  char *in_s, *in_e;
+    
+  int max_nseqs, wu_nseqs, rc, slave_idx, seq_idx, i;
 
   // Init data structures
   ctx.nslaves = nslaves;
@@ -106,9 +114,41 @@ master_main (int nslaves)
   }
 
   // Load Query file
-  int nseqs = NUM_JOBS;
-  int max_nseqs = 2;
+  // TODO: break "load, and map" code into a function
+  in_path = getenv("HSP_QFILE");
+  if ((in_fd = open(in_path, O_RDONLY)) == -1) {
+    fprintf(stderr, "%s: Could not open file: %s\n", in_path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
 
+  // Get file size
+  if (fstat(in_fd, &in_st) < 0) {
+    close(in_fd);
+    fprintf(stderr, "%s: Could not stat file: %s\n", in_path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  in_size = in_st.st_size;
+
+  // Memory map the file
+  in_data = mmap(NULL, in_size, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, in_fd, 0);
+  if (in_data == MAP_FAILED) {
+    close(in_fd);
+    fprintf(stderr, "%s: Could not mmap file: %s\n", in_path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  // Count number of inputs
+  in_cnt=1;
+  in_s=in_data;
+  while((in_e = iter_next(in_data, in_data+in_size, in_s)) < in_data+in_size) {
+    in_cnt++;
+    in_s = in_e;
+  }
+  fprintf(stderr, "master: %u inputs\n", in_cnt);
+
+  max_nseqs = in_cnt / nslaves;
+  wu_nseqs  = 1;
+  
   // Post a receive work request for each slave
   for (i=0; i<nslaves; i++) {
     rc = MPI_Irecv(&ctx.slaves[i].request, sizeof(struct request), MPI_BYTE,
@@ -117,7 +157,8 @@ master_main (int nslaves)
   }
 
   // Hand out work units
-  for (seq_idx=0; seq_idx < nseqs; seq_idx += wu_nseqs) {
+  in_s = in_data;
+  for (seq_idx=0; seq_idx < in_cnt; seq_idx += wu_nseqs) {
     // Wait until any slave requests a work unit
     MPI_Waitany(nslaves, ctx.mpi_req, &slave_idx, MPI_STATUSES_IGNORE);
     s = &ctx.slaves[slave_idx];
@@ -136,19 +177,20 @@ master_main (int nslaves)
         wu_nseqs = max_nseqs;
       }
 
-      // Build data (and leak memory)
-      char *data = "Hello World!!!\n";
-      s->wu_data = malloc(strlen(data) * wu_nseqs);
-      s->wu_data[0] = '\0';
-      for (i=wu_nseqs; i; --i) {
-        strcat(s->wu_data, data);
+      // Determine size of all the data we need
+      for (in_e=in_s, i=wu_nseqs; i; --i) {
+        in_e = iter_next(in_data, in_data+in_size, in_e);
       }
 
       // Prepare work unit for data
+      s->wu_data         = in_s;
       s->workunit.type   = WU_TYPE_DATA;
       s->workunit.blk_id = seq_idx;
       s->workunit.count  = wu_nseqs;
-      s->workunit.len    = strlen(s->wu_data); /*size of data in bytes*/;
+      s->workunit.len    = in_e - in_s;
+
+      // Advance our iterator
+      in_s = in_e;
 
       // Send work unit information
       MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,

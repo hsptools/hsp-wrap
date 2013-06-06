@@ -175,7 +175,7 @@ slave_main (const char *cmd)
         if (queue != NULL) {
           // Handle data request locally
           // Iterator code...
-          char *end  = strchr(queue->r_ptr, '\n') + 1;
+          char *end  = iter_next(queue->data, queue->data+queue->size, queue->r_ptr);
           off_t len  = end - queue->r_ptr;
           push_work(wid, queue->r_ptr, len);
           worker_iterations[wid]++;
@@ -186,6 +186,7 @@ slave_main (const char *cmd)
           // Now advance the iterator
           queue->len -= len;
           queue->count--;
+          queue->r_ptr += len;
           // Advance to next buffer if needed
           if (queue->count == 0) {
             assert(queue->len == 0);

@@ -45,4 +45,6 @@ struct request {
   uint32_t           count;
 };
 
+char *iter_next(char *s, char *e, char *i);
+
 #endif // HSPWRAP_H__
