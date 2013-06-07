@@ -10,7 +10,7 @@
 #include "master.h"
 #include "slave.h"
 
-#define NUM_PROCS      2
+#define NUM_PROCS      1
 
 int
 main (int argc, char **argv)
@@ -36,6 +36,7 @@ main (int argc, char **argv)
   if (rank) {
     slave_init(rank, ranks-1, NUM_PROCS);
   } else {
+    fprintf(stderr, "HSPwrap: Started\n");
     master_init();
   }
 

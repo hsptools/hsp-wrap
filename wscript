@@ -79,9 +79,9 @@ def configure(conf):
     """
 
     # libYAML
-    conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
-            args='--cflags --libs', uselib_store='YAML',
-            mandatory=True)
+    #conf.check_cfg(package='yaml-0.1', atleast_version='0.1.2',
+    #        args='--cflags --libs', uselib_store='YAML',
+    #        mandatory=True)
 
     #conf.check_cfg(package='glib-2.0', atleast_version='2.16',
     #        args='--cflags --libs', uselib_store='GLIB2', mandatory=True)

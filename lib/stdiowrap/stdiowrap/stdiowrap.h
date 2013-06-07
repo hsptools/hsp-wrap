@@ -7,6 +7,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include <stdio.h>
 #include <stdarg.h>
+// FIXME: Include this for now ...
+#include <sys/stat.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 // Interface (external to stdiowrap.c)
@@ -39,6 +41,8 @@
 #      undef putc
 #    endif
 #    define putc(a,b)        stdiowrap_putc((a),(b))
+#    define stat(a,b)        stdiowrap_stat((a),(b))
+#    define lstat(a,b)       stdiowrap_stat((a),(b))
 #  endif
 #endif
 
@@ -73,6 +77,16 @@ int     stdiowrap_fputs   (const char *ptr, FILE *stream);
 int     stdiowrap_fputc   (int c, FILE *stream);
 int     stdiowrap_putc    (int c, FILE *stream);
 int     stdiowrap_fprintf (FILE *stream, const char *format, ...);
+
+// Metadata
+int     stdiowrap_stat    (const char *path, struct stat *buf);
+
+// Basic mmap stuff
+int     stdiowrap_open    (const char *path, int flags);
+int     stdiowrap_close   (int fd);
+void   *stdiowrap_mmap    (void *addr, size_t len, int prot, int flags, int fd, off_t off);
+int     stdiowrap_munmap  (void *addr, size_t len);
+
 
 #ifdef __cplusplus
 }

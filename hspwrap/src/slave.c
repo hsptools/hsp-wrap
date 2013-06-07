@@ -100,6 +100,7 @@ slave_broadcast_shared_file(const char *path)
   // Get shared-file data, and add to file table
   data = ps_ctl_add_file(ps_ctl, -1, path, sz);
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+  fprintf(stderr, "slave: received file %s with size %zu\n", path, sz);
 }
 
 
@@ -218,6 +219,9 @@ slave_main (const char *cmd)
           ps_ctl->process_cmd[wid] = RUN;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
+	  fprintf(stderr, "slave: sent new data to worker %d:\n", wid);
+	  fwrite(queue->r_ptr, 1, len, stderr);
+	  fputc('\n', stderr);
 
           // Now advance the iterator
           queue->len -= len;

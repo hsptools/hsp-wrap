@@ -99,7 +99,21 @@ int
 fork_worker (wid_t wid, const char *exe)
 {
   char env[2][40];
-  char *env_list[3] = {env[0], env[1], NULL};
+  //char *env_list[3] = {env[0], env[1], NULL};
+  
+  // Count environment variables
+  int nenviron, i;
+  for (nenviron=0; environ[nenviron]; ++nenviron) ;
+
+  // Make new list
+  fprintf(stderr, "Copying %d environment variables\n", nenviron);
+  char **env_list = malloc((nenviron + 3) * sizeof(char *));
+  for (i=0; i<nenviron; ++i) {
+    env_list[i] = environ[i];
+  }
+  env_list[i]   = env[0];
+  env_list[i+1] = env[1];
+  env_list[i+2] = NULL;
 
   // Start child
   pid_t pid = fork();
@@ -109,7 +123,8 @@ fork_worker (wid_t wid, const char *exe)
     snprintf(env[0], ARRAY_SIZE(env[0]), PID_ENVVAR "=%d", hspwrap_pid);
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
-    if (execle("exefile", "exefile", "outputfile", "inputfile", "./README", NULL, env_list)) {
+    // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
+    if (execle("exefile", "blastall", "-p", "blastp", "-d", "/lustre/medusa/pgiblock/hspwrap/try/nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", NULL, env_list)) {
       fputs("Could not exec: ",stderr);
       fputs(strerror(errno),stderr);
       fputc('\n',stderr);
@@ -186,6 +201,14 @@ process_pool_start (pid_t wrapper_pid, int nproc, const char *cmd)
   while (forked) {
     exit_pid = wait(&status);
     wid = worker_for_pid(exit_pid);
+    fprintf(stderr, "Worker %d (pid %d) exited", wid, exit_pid);
+    if (WIFEXITED(status)) {
+      fprintf(stderr, " with status %d\n", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      fprintf(stderr, " with signal %d\n", WTERMSIG(status));
+    } else {
+      fputc('\n', stderr);
+    }
 
     // Update state to "DONE"
     pthread_mutex_lock(&ps_ctl->lock);

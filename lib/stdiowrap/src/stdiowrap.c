@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -20,6 +21,8 @@
 #include "stdiowrap/stdiowrap.h"
 #include "stdiowrap-internal.h"
 
+//#define trace_fn(fmt, ...) fprintf(stderr, "stdiowrap: " __func__ "(" fmt ")\n", __VA_ARGS__)
+#define trace_fn(fmt, ...) fprintf(stderr, "stdiowrap: %s(" fmt ")\n", __func__, __VA_ARGS__)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal State
@@ -96,54 +99,75 @@ init_SHM ()
                       MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
                       fd, 0);
     if (ps_ctl == MAP_FAILED) {
-      fprintf(stderr,"stdiowrap: Failed to attach index SHM (%s): %s\n", shmname, strerror(errno));
+      fprintf(stderr, "stdiowrap: Failed to attach index SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
     }
+    fprintf(stderr, "stdiowrap: initialized. (stdin: %p, stdout: %p, stderr: %p)\n", stdin, stdout, stderr);
   }
 }
 
 
-static int
-fill_WFILE_data_SHM (struct WFILE *wf)
+static struct file_table_entry *
+find_file_entry (const char *name, int *idx)
 {
   int i;
 
   // Attach list SHM if needed
   init_SHM();
 
-  // Only fill for files that are listed
+  // Find the file
   for (i=0; i < ps_ctl->ft.nfiles; i++) {
     struct file_table_entry *f = ps_ctl->ft.file + i;
 
     // FIXME SEGFAULT?!?!? FIXME
-    if (!strcmp(f->name, wf->name) && (f->wid == wid || f->wid == -1)) {
-      char  shmname[256];
-
-      fprintf(stderr, "FILE%d %s %s %d %d\n", i, f->name, wf->name, f->wid, wid);
-
-      snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, i);
-      int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-      
-      // Attach the shared memory segment
-      wf->data = mmap(NULL, f->shm_size, PROT_READ | PROT_WRITE, 
-                      MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-                      fd, 0);
-      if (wf->data == MAP_FAILED) {
-        fprintf(stderr, "stdiowrap: Failed to attach SHM.\n");
-        fflush(stderr);
-	      exit(1);
+    if (!strcmp(f->name, name) && (f->wid == wid || f->wid == -1)) {
+      if (idx) {
+	*idx = i;
       }
-      wf->size  = f->size;
-      wf->tsize = f->shm_size;
-      wf->psize = &(f->size);
-      wf->is_stream = (f->wid != -1);
-      // We are done; return
-      return 0;
+      return f;
     }
   }
 
-  // The SHM was not found
-  return -1;
+  return NULL;
+}
+
+
+static int
+fill_WFILE_data_SHM (struct WFILE *wf)
+{
+  struct file_table_entry *f;
+  int idx;
+
+  f = find_file_entry(wf->name, &idx);
+  if (f) {
+    char  shmname[256];
+
+    fprintf(stderr, "stdiowrap: mapped file %d %s %s %d %d\n", idx, f->name, wf->name, f->wid, wid);
+
+    snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, idx);
+    int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    
+    // Attach the shared memory segment
+    wf->data = mmap(NULL, f->shm_size, PROT_READ | PROT_WRITE, 
+		    MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+		    fd, 0);
+    if (wf->data == MAP_FAILED) {
+      fprintf(stderr, "stdiowrap: Failed to attach SHM.\n");
+      fflush(stderr);
+	    exit(1);
+    }
+    wf->size  = f->size;
+    wf->tsize = f->shm_size;
+    wf->psize = &(f->size);
+    wf->is_stream = (f->wid != -1);
+
+    // We are done; return
+    return 0;
+  } else {
+    // The SHM was not found
+    fprintf(stderr, "stdiowrap: could not map file %s %d\n", wf->name, wid);
+    return -1;
+  }
 }
 
 
@@ -229,6 +253,7 @@ new_WFILE (const char *fn)
 
   // Copy file path
   if (!(wf->name = strdup(name))) {
+    fprintf(stderr, "stdiowrap: new_WFILE: failed to allocate WFILE name.\n");
     destroy_WFILE(wf);
     errno = ENOMEM;
     return NULL;
@@ -237,6 +262,7 @@ new_WFILE (const char *fn)
   // Fill in data segment 
   rv = fill_WFILE_data_SHM(wf);
   if (rv < 0) {
+    fprintf(stderr, "stdiowrap: new_WFILE: failed to fill WFILE.\n");
     destroy_WFILE(wf);
     errno = ENOENT;
     return NULL;
@@ -270,7 +296,7 @@ destroy_WFILE (struct WFILE *wf)
 }
 
 
-static void
+static int
 include_WFILE (struct WFILE *wf)
 {
   // Make room for new WFILE in searchable list
@@ -281,7 +307,7 @@ include_WFILE (struct WFILE *wf)
 
   // Register / Include WFILE
   IncludedWFILEs[nIncludedWFILEs] = wf;
-  nIncludedWFILEs++;
+  return nIncludedWFILEs++;
 }
 
 
@@ -460,6 +486,7 @@ wait_nospace (struct WFILE *wf)
 extern FILE *
 stdiowrap_fopen (const char *path, const char *mode)
 {
+  trace_fn("'%s', '%s'", path, mode);
   struct WFILE *wf = new_WFILE(path);
 
   // Check for creation error
@@ -483,6 +510,7 @@ stdiowrap_fopen (const char *path, const char *mode)
 extern int
 stdiowrap_fclose (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, 0);
 
   // Unregister and destroy the wrapped object
@@ -495,6 +523,7 @@ stdiowrap_fclose (FILE *stream)
 extern size_t
 stdiowrap_fread (void *ptr, size_t size, size_t nmemb, FILE *stream)
 {
+  trace_fn("%p, %zu, %zu, %p", ptr, size, nmemb, stream);
   MAP_WF_E(wf, stream, 0);
 
   unsigned char *ubound = wf->data + wf->size;	// upper bound
@@ -542,6 +571,7 @@ stdiowrap_fread (void *ptr, size_t size, size_t nmemb, FILE *stream)
 extern char *
 stdiowrap_fgets (char *s, int size, FILE *stream)
 {
+  trace_fn("%p, %d, %p", s, size, stream);
   MAP_WF_E(wf, stream, NULL);
   char ch;
   char *p = s;
@@ -580,6 +610,7 @@ stdiowrap_fgets (char *s, int size, FILE *stream)
 extern int
 stdiowrap_fgetc (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, EOF);
   unsigned char *ubound = wf->data + wf->size;	// upper bound
 
@@ -599,6 +630,7 @@ stdiowrap_fgetc (FILE *stream)
 extern int
 stdiowrap_getc (FILE *stream)
 {
+  trace_fn("%p", stream);
   return stdiowrap_fgetc(stream);
 }
 
@@ -606,6 +638,7 @@ stdiowrap_getc (FILE *stream)
 extern int
 stdiowrap_fscanf (FILE *stream, const char *format, ...)
 {
+  trace_fn("%p, '%s', ...", stream, format);
   MAP_WF_E(wf, stream, -1);
 
   // !!av: This is a sub, prob needs to be filled in
@@ -630,6 +663,7 @@ stdiowrap_fscanf (FILE *stream, const char *format, ...)
 extern int
 stdiowrap_ungetc (int c, FILE *stream)
 {
+  trace_fn("%d, %p", c, stream);
   MAP_WF_E(wf, stream, EOF);
 
   // Make sure we can position the cursor back one char
@@ -651,6 +685,7 @@ stdiowrap_ungetc (int c, FILE *stream)
 extern int
 stdiowrap_fseek (FILE *stream, long offset, int whence)
 {
+  trace_fn("%p, %ld, %d", stream, offset, whence);
   MAP_WF_E(wf, stream, -1);
 
   // File out what we are relative to
@@ -680,6 +715,7 @@ stdiowrap_fseek (FILE *stream, long offset, int whence)
 extern int
 stdiowrap_fseeko (FILE *stream, off_t offset, int whence)
 {
+  trace_fn("%p, %ld, %d", stream, offset, whence);
   MAP_WF_E(wf, stream, -1);
 
   // File out what we are relative to
@@ -709,6 +745,7 @@ stdiowrap_fseeko (FILE *stream, off_t offset, int whence)
 extern long
 stdiowrap_ftell (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, -1);
 
   // Return the offset of the cursor from the start
@@ -719,6 +756,7 @@ stdiowrap_ftell (FILE *stream)
 extern off_t
 stdiowrap_ftello (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, -1);
 
   // Return the offset of the cursor from the start
@@ -729,6 +767,7 @@ stdiowrap_ftello (FILE *stream)
 extern void
 stdiowrap_rewind (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF(wf, stream);
 
   // Reset the cursor pointer to the start
@@ -739,6 +778,7 @@ stdiowrap_rewind (FILE *stream)
 extern int
 stdiowrap_feof (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, 0);
 
   // Check the cursor pointer for bounds
@@ -753,6 +793,7 @@ stdiowrap_feof (FILE *stream)
 extern int
 stdiowrap_fflush (FILE *stream)
 {
+  trace_fn("%p", stream);
   MAP_WF_E(wf, stream, EOF);
 
   // All operations happen to memory, so
@@ -764,6 +805,7 @@ stdiowrap_fflush (FILE *stream)
 extern size_t
 stdiowrap_fwrite (const void *ptr, size_t size, size_t nmemb, FILE *stream)
 {
+  trace_fn("%p, %zu, %zu, %p", ptr, size, nmemb, stream);
   MAP_WF_E(wf, stream, 0);
 
   // Check bounds
@@ -797,6 +839,7 @@ stdiowrap_fwrite (const void *ptr, size_t size, size_t nmemb, FILE *stream)
 extern int
 stdiowrap_fputs (const char *s, FILE *stream)
 {
+  trace_fn("'%s', %p", s, stream);
   MAP_WF_E(wf, stream, -1);
   const char *p = s;
 
@@ -838,6 +881,7 @@ stdiowrap_fputs (const char *s, FILE *stream)
 extern int
 stdiowrap_fputc (int c, FILE *stream)
 {
+  trace_fn("%c, %p", c, stream);
   MAP_WF_E(wf, stream, EOF);
 
   // Make sure there is room for a character to be written
@@ -862,6 +906,7 @@ stdiowrap_fputc (int c, FILE *stream)
 extern int
 stdiowrap_putc (int c, FILE *stream)
 {
+  trace_fn("%c, %p", c, stream);
   return stdiowrap_fputc(c, stream);
 }
 
@@ -869,6 +914,16 @@ stdiowrap_putc (int c, FILE *stream)
 extern int
 stdiowrap_fprintf (FILE *stream, const char *format, ...)
 {
+  {
+    va_list dbg_ap;
+    char dbg_buff[4096];
+    va_start(dbg_ap, format);
+    vsnprintf(dbg_buff, sizeof(dbg_buff), format, dbg_ap);
+    va_end(dbg_ap);
+
+    trace_fn("%p, '%s', <<%s>>", stream, format, dbg_buff);
+  }
+
   va_list ap;
   size_t  sz;
   int     wc;
@@ -913,6 +968,127 @@ stdiowrap_fprintf (FILE *stream, const char *format, ...)
   // Return the write count
   return wc;
 }
+
+
+int
+stdiowrap_stat (const char *path, struct stat *buf)
+{
+  trace_fn("'%s', %p", path, buf);
+  struct file_table_entry *f;
+  time_t t;
+  int idx;
+
+  if (!buf) {
+    errno = EFAULT;
+    return -1;
+  }
+
+  f = find_file_entry(path, &idx);
+  if (f) {
+    t = time(NULL);
+    buf->st_dev     = 1;
+    buf->st_ino     = idx;
+    buf->st_mode    = S_IFMT | S_IFREG | S_IRWXU;
+    buf->st_nlink   = 1;
+    buf->st_uid     = getuid();
+    buf->st_gid     = getgid();
+    buf->st_rdev    = 0;
+    buf->st_size    = f->shm_size;
+    buf->st_blksize = 512;
+    buf->st_blocks  = f->shm_size/512 + 1;
+    buf->st_atime   = t;
+    buf->st_mtime   = t;
+    buf->st_ctime   = t;
+    return 0;
+  } else {
+    // File doesn't exist
+    errno = ENOENT;
+    return -1;
+  }
+}
+
+// TODO: Fix these functions (use separate inclusion list for POSIX I/O)
+
+int
+stdiowrap_open (const char *path, int flags)
+{
+  trace_fn("'%s', %d", path, flags);
+  struct WFILE *wf = new_WFILE(path);
+
+  // Check for creation error
+  if (!wf) {
+    // errno will fall through from new_WFILE()
+    return NULL;
+  }
+
+  // Assume cursor positioned at start
+  wf->pos    = wf->data;
+  wf->offset = 0;
+
+  // Register this as a valid mapping
+  include_WFILE(wf);
+
+  // Return the WFILE's stream handle pointer
+  return (int)wf->stream;
+}
+
+
+int
+stdiowrap_close (int fd)
+{
+  trace_fn("%d", fd);
+  MAP_WF_E(wf, (FILE *)fd, 0);
+
+  // TODO: "close" file (but actually leave open until munmapped)
+  if (!wf) {
+    errno = ENOENT;
+    return -1;
+  }
+  return 0;
+}
+
+
+void *
+stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
+{
+  trace_fn("%p, %zu, %d, %d, %d, %lld", addr, len, prot, flags, fd, (long long)off);
+  MAP_WF_E(wf, (FILE *)fd, 0);
+
+  if (addr != NULL) {
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
+
+  if (!wf) {
+    errno = ENOENT;
+    return MAP_FAILED;
+  } 
+
+  /*
+  f = ps_ctl->ft.file + fd;
+
+  if (f->wid != -1) {
+    errno = EACCES;
+    return MAP_FAILED;
+  }
+  */
+  if (wf->tsize < off + len) {
+    errno = ENXIO;
+    return MAP_FAILED;
+  }
+
+  return wf->data + off;
+}
+
+
+int
+stdiowrap_munmap (void *addr, size_t len)
+{
+  trace_fn("%p, %zu", addr, len);
+  // TODO: implement
+  return 0;
+}
+
 
 #undef MAP_WF
 #undef MAP_WF_E

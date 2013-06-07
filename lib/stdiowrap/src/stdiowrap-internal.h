@@ -31,7 +31,7 @@ struct WFILE {
 
 static struct WFILE *new_WFILE (const char *fn);
 static void   destroy_WFILE (struct WFILE *wf);
-static void   include_WFILE (struct WFILE *wf);
+static int    include_WFILE (struct WFILE *wf);
 static void   exclude_WFILE (struct WFILE *wf);
 static struct WFILE *find_WFILE (FILE *f);
 
