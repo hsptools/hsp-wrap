@@ -38,11 +38,16 @@ wid_t wid;
 // The next FILE pointer to use for open
 static void *Next_FILE = ((void*)1);
 
-
 // The "included" WFILEs (names are searchable)
 static struct WFILE **IncludedWFILEs  = NULL;
 static int     nIncludedWFILEs = 0;
 
+// File Descriptor emulation
+static const int fd_check_val   = (((unsigned)-1)>>1) ^ (((unsigned)-1)>>2);
+static const int fd_check_mask  = ~(((unsigned)-1)>>2);
+//static int fd_next              = (((unsigned)-1)>>1) ^ (((unsigned)-1)>>2);
+static int fd_next              = 10;
+static struct WFILEDES *fd_list = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
 // SHM-specific routines
@@ -77,6 +82,9 @@ init_SHM ()
 
     snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
     fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (fd == -1) {
+      fprintf(stderr, "stdiowrap: Failed to open process control SHM (%s): %s\n", shmname, strerror(errno));
+      exit(1);
     
     // The file descriptors for the SHMs will already be available to
     // the current process, as it is the child of the process that
@@ -99,10 +107,11 @@ init_SHM ()
                       MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
                       fd, 0);
     if (ps_ctl == MAP_FAILED) {
-      fprintf(stderr, "stdiowrap: Failed to attach index SHM (%s): %s\n", shmname, strerror(errno));
+      fprintf(stderr, "stdiowrap: Failed to map process control SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
     }
-    fprintf(stderr, "stdiowrap: initialized. (stdin: %p, stdout: %p, stderr: %p)\n", stdin, stdout, stderr);
+    fprintf(stderr, "stdiowrap: initialized.\n");
+    //shm_unlink(shmname);
   }
 }
 
@@ -142,7 +151,7 @@ fill_WFILE_data_SHM (struct WFILE *wf)
   if (f) {
     char  shmname[256];
 
-    fprintf(stderr, "stdiowrap: mapped file %d %s %s %d %d\n", idx, f->name, wf->name, f->wid, wid);
+    //fprintf(stderr, "stdiowrap: virtualize file %d %s %s %d %d\n", idx, f->name, wf->name, f->wid, wid);
 
     snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, idx);
     int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -161,11 +170,13 @@ fill_WFILE_data_SHM (struct WFILE *wf)
     wf->psize = &(f->size);
     wf->is_stream = (f->wid != -1);
 
+    //shm_unlink(shmname);
+
     // We are done; return
     return 0;
   } else {
     // The SHM was not found
-    fprintf(stderr, "stdiowrap: could not map file %s %d\n", wf->name, wid);
+    fprintf(stderr, "stdiowrap: could not virtualize file %s %d\n", wf->name, wid);
     return -1;
   }
 }
@@ -526,10 +537,10 @@ stdiowrap_fread (void *ptr, size_t size, size_t nmemb, FILE *stream)
   trace_fn("%p, %zu, %zu, %p", ptr, size, nmemb, stream);
   MAP_WF_E(wf, stream, 0);
 
-  unsigned char *ubound = wf->data + wf->size;	// upper bound
-  size_t         avail  = ubound - wf->pos;	// bytes available
-  size_t         remain = size * nmemb;
-  size_t         read   = 0;
+  char   *ubound = wf->data + wf->size;	// upper bound
+  size_t  avail  = ubound - wf->pos;	// bytes available
+  size_t  remain = size * nmemb;
+  size_t  read   = 0;
 
   while (remain > avail) {
     // Wants too much, copy everything we have
@@ -1009,39 +1020,77 @@ stdiowrap_stat (const char *path, struct stat *buf)
 
 // TODO: Fix these functions (use separate inclusion list for POSIX I/O)
 
+struct WFILEDES *
+find_WFILEDES_path (const char *path)
+{
+  struct WFILEDES *wfd;
+
+  for (wfd = fd_list; wfd; wfd=wfd->next) {
+    if (!strcmp(ps_ctl->ft.file[wfd->fte_idx].name, path)) {
+      break;
+    }
+  }
+  return wfd;
+}
+
+
+struct WFILEDES *
+find_WFILEDES_fd (int fd)
+{
+  struct WFILEDES *wfd;
+
+  for (wfd = fd_list; wfd; wfd=wfd->next) {
+    if (wfd->fd == fd) {
+      break;
+    }
+  }
+  return wfd;
+}
+
+
 int
 stdiowrap_open (const char *path, int flags)
 {
   trace_fn("'%s', %d", path, flags);
-  struct WFILE *wf = new_WFILE(path);
+  struct file_table_entry *f;
+  struct WFILEDES *wfd;
+  int idx;
 
-  // Check for creation error
-  if (!wf) {
-    // errno will fall through from new_WFILE()
-    return NULL;
+  // First, check if we've opened this file before
+  wfd = find_WFILEDES_path(path);
+  if (wfd) {
+    return wfd->fd;
   }
 
-  // Assume cursor positioned at start
-  wf->pos    = wf->data;
-  wf->offset = 0;
+  // Didn't find it, got to make a new one
+  f = find_file_entry(path, &idx);
+  if (!f) {
+    fprintf(stderr, "stdiowrap: open: %s could not be found\n", path);
+    return -1;
+  }
 
-  // Register this as a valid mapping
-  include_WFILE(wf);
+  wfd = malloc(sizeof(struct WFILEDES));
+  wfd->fd = fd_next++;
+  wfd->data = NULL;
+  wfd->ref_cnt = 0;
+  wfd->fte_idx = idx;
+  wfd->next = fd_list;
+  fd_list = wfd;
 
-  // Return the WFILE's stream handle pointer
-  return (int)wf->stream;
+  return wfd->fd;
 }
-
+	  
 
 int
 stdiowrap_close (int fd)
 {
   trace_fn("%d", fd);
-  MAP_WF_E(wf, (FILE *)fd, 0);
+  struct WFILEDES *wfd;
 
-  // TODO: "close" file (but actually leave open until munmapped)
-  if (!wf) {
-    errno = ENOENT;
+  wfd = find_WFILEDES_fd(fd);
+  if (!wfd) {
+    fprintf(stderr, "stdiowrap: close: couldn't find fd: %d\n", fd);
+    errno = EBADF;
     return -1;
   }
   return 0;
@@ -1052,39 +1101,62 @@ void *
 stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
 {
   trace_fn("%p, %zu, %d, %d, %d, %lld", addr, len, prot, flags, fd, (long long)off);
-  MAP_WF_E(wf, (FILE *)fd, 0);
+  struct WFILEDES *wfd;
+
+  wfd = find_WFILEDES_fd(fd);
+  if (!wfd) {
+    fprintf(stderr, "stdiowrap: mmap failed: couldn't find WFD\n");
+    errno = EBADF;
+    return MAP_FAILED;
+  }
 
   if (addr != NULL) {
+    fprintf(stderr, "stdiowrap: mmap failed: can't map to specific address\n");
     errno = ENOMEM;
     return MAP_FAILED;
   }
 
-  if (!wf) {
-    errno = ENOENT;
-    return MAP_FAILED;
-  } 
-
-  /*
-  f = ps_ctl->ft.file + fd;
-
-  if (f->wid != -1) {
+  if (prot & (PROT_WRITE|PROT_EXEC)) {
+    fprintf(stderr, "stdiowrap: mmap failed: cannot grant write or exec access\n");
     errno = EACCES;
     return MAP_FAILED;
   }
-  */
-  if (wf->tsize < off + len) {
+
+  struct file_table_entry *fte = &ps_ctl->ft.file[wfd->fte_idx];
+
+  if (fte->shm_size < off + len) {
+    fprintf(stderr, "stdiowrap: mmap failed: length and/or offset are out of range\n");
     errno = ENXIO;
     return MAP_FAILED;
   }
 
-  return wf->data + off;
+  // mmap if not already mapped
+  if (wfd->ref_cnt == 0) {
+    char shmname[256];
+    int  shmfd;
+    snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, wfd->fte_idx);
+    shmfd = shm_open(shmname, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (shmfd == -1) {
+      fprintf(stderr, "stdiowrap: mmap failed: couldn't open SHM: %s\n", shmname);
+      return MAP_FAILED;
+    }
+    wfd->data = mmap(NULL, fte->shm_size, PROT_READ, MAP_SHARED, shmfd, 0);
+    if (wfd->data == MAP_FAILED) {
+      fprintf(stderr, "stdiowrap: mmap failed: couldn't mmap SHM: %s\n", shmname);
+      return MAP_FAILED;
+    }
+    //shm_unlink(shmname);
+  }
+
+  wfd->ref_cnt++;
+  return wfd->data + off;
 }
 
 
 int
 stdiowrap_munmap (void *addr, size_t len)
 {
-  trace_fn("%p, %zu", addr, len);
+  trace_fn("%p, %zu <<STUB>>", addr, len);
   // TODO: implement
   return 0;
 }

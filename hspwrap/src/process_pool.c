@@ -124,7 +124,7 @@ fork_worker (wid_t wid, const char *exe)
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
     // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
-    if (execle("exefile", "blastall", "-p", "blastp", "-d", "/lustre/medusa/pgiblock/hspwrap/try/nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", NULL, env_list)) {
+    if (execle("exefile", "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", NULL, env_list)) {
       fputs("Could not exec: ",stderr);
       fputs(strerror(errno),stderr);
       fputc('\n',stderr);
