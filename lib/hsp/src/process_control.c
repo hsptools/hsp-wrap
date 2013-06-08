@@ -128,6 +128,20 @@ ps_ctl_all_running (struct process_control *ps_ctl)
 }
 
 
+void
+ps_ctl_print (struct process_control *ps_ctl, FILE *f)
+{
+  struct file_table_entry *fte;
+  int i;
+
+  for (i=0; i < ps_ctl->ft.nfiles; ++i) {
+    fte = &ps_ctl->ft.file[i];
+    fprintf(f, "  file: %4d wid: %4d path: %30s size: %zu\n",
+            i, fte->wid, fte->name, fte->shm_size);
+  }
+}
+
+
 /**
  * Create a shared memory segment and map it into virtual memory.
  */

@@ -10,7 +10,7 @@
 #include "master.h"
 #include "slave.h"
 
-#define NUM_PROCS      1
+#define NUM_PROCS 16
 
 int
 main (int argc, char **argv)

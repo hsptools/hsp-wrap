@@ -21,8 +21,8 @@
 #include "stdiowrap/stdiowrap.h"
 #include "stdiowrap-internal.h"
 
-//#define trace_fn(fmt, ...) fprintf(stderr, "stdiowrap: " __func__ "(" fmt ")\n", __VA_ARGS__)
-#define trace_fn(fmt, ...) fprintf(stderr, "stdiowrap: %s(" fmt ")\n", __func__, __VA_ARGS__)
+//#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
+#define trace_fn(fmt, ...) 
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal State
@@ -85,6 +85,7 @@ init_SHM ()
     if (fd == -1) {
       fprintf(stderr, "stdiowrap: Failed to open process control SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
+    }
     
     // The file descriptors for the SHMs will already be available to
     // the current process, as it is the child of the process that
@@ -110,8 +111,7 @@ init_SHM ()
       fprintf(stderr, "stdiowrap: Failed to map process control SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
     }
-    fprintf(stderr, "stdiowrap: initialized.\n");
-    //shm_unlink(shmname);
+    shm_unlink(shmname);
   }
 }
 
@@ -170,7 +170,7 @@ fill_WFILE_data_SHM (struct WFILE *wf)
     wf->psize = &(f->size);
     wf->is_stream = (f->wid != -1);
 
-    //shm_unlink(shmname);
+    shm_unlink(shmname);
 
     // We are done; return
     return 0;
@@ -1145,7 +1145,7 @@ stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
       fprintf(stderr, "stdiowrap: mmap failed: couldn't mmap SHM: %s\n", shmname);
       return MAP_FAILED;
     }
-    //shm_unlink(shmname);
+    shm_unlink(shmname);
   }
 
   wfd->ref_cnt++;
@@ -1160,7 +1160,6 @@ stdiowrap_munmap (void *addr, size_t len)
   // TODO: implement
   return 0;
 }
-
 
 #undef MAP_WF
 #undef MAP_WF_E
