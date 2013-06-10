@@ -111,7 +111,7 @@ init_SHM ()
       fprintf(stderr, "stdiowrap: Failed to map process control SHM (%s): %s\n", shmname, strerror(errno));
       exit(1);
     }
-    shm_unlink(shmname);
+    //shm_unlink(shmname);
   }
 }
 
@@ -170,7 +170,7 @@ fill_WFILE_data_SHM (struct WFILE *wf)
     wf->psize = &(f->size);
     wf->is_stream = (f->wid != -1);
 
-    shm_unlink(shmname);
+    //shm_unlink(shmname);
 
     // We are done; return
     return 0;
@@ -1145,7 +1145,7 @@ stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
       fprintf(stderr, "stdiowrap: mmap failed: couldn't mmap SHM: %s\n", shmname);
       return MAP_FAILED;
     }
-    shm_unlink(shmname);
+    //shm_unlink(shmname);
   }
 
   wfd->ref_cnt++;

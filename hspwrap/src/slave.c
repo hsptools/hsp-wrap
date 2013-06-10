@@ -22,7 +22,7 @@
 
 #include "slave.h"
 
-#define BUFFER_SIZE (1L<<20)
+#define BUFFER_SIZE (4L<<20)
 
 struct cache_buffer
 {
@@ -100,7 +100,6 @@ slave_broadcast_shared_file(const char *path)
   // Get shared-file data, and add to file table
   data = ps_ctl_add_file(ps_ctl, -1, path, sz);
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
-  fprintf(stderr, "slave: received file %s with size %zu\n", path, sz);
 }
 
 

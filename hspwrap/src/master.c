@@ -72,6 +72,7 @@ master_broadcast_file (const char *path)
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
 
   // Done broadcasting file, sender will no longer need it (for now)
+  fprintf(stderr, "master: broadcasted file %s with size %zu\n", path, sz);
   munmap(data, sz);
   close(fd);
 }
