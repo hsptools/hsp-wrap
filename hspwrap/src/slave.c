@@ -22,8 +22,6 @@
 
 #include "slave.h"
 
-#define BUFFER_SIZE (1L<<20)
-
 struct cache_buffer
 {
   struct cache_buffer *next;
@@ -34,7 +32,7 @@ struct cache_buffer
   char data[];  // The whole data buffer
 };
 
-static int mkpath (const char *path, mode_t mode);
+static int  mkpath (const char *path, mode_t mode);
 static void fork_process_pool (const char *cmd);
 static int  request_work (struct cache_buffer **queue);
 static void push_work (wid_t wid, const char *data, size_t len);
@@ -43,6 +41,7 @@ static void pull_results (struct writer_ctx *w, wid_t wid);
 // TODO: add slave_ctx to wrap this stuff
 struct writer_ctx writer;
 struct process_control *ps_ctl;
+int    sid;
 
 void
 slave_init (int slave_idx, int nslaves, int nprocesses)
@@ -85,13 +84,14 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
     ps_ctl_add_file(ps_ctl, i, "inputfile", BUFFER_SIZE);
     ps_ctl_add_file(ps_ctl, i, "outputfile", BUFFER_SIZE);
   }
+  sid = slave_idx;
 }
 
 
 void
 slave_broadcast_shared_file(const char *path)
 {
-  void  *data, *shm;
+  void  *shm;
   size_t sz;
 
   // Get file size
@@ -101,20 +101,16 @@ slave_broadcast_shared_file(const char *path)
   shm = ps_ctl_add_file(ps_ctl, -1, path, sz);
 
   // write data (MPI+mmap work-around)
-  data = malloc(sz);
-  fprintf(stderr, "slave: Receiving data for file: %s...\n", path);
-  MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
-  memcpy(shm, data, sz);
-  free(data);
+  chunked_bcast(shm, sz, 0, MPI_COMM_WORLD);
 }
 
 
 void
 slave_broadcast_work_file(const char *path)
 {
-  void  *data, *file;
-  size_t sz;
-  int    fd;
+  void   *file;
+  size_t  sz;
+  int     fd;
 
   // Get file size
   fprintf(stderr, "slave: Receiving work file size...\n");
@@ -143,11 +139,7 @@ slave_broadcast_work_file(const char *path)
   fprintf(stderr, "slave: Memory mapped file %s\n", path);
 
   // write data (MPI+mmap work-around)
-  data = malloc(sz);
-  fprintf(stderr, "slave: Receiving data for file: %s...\n", path);
-  MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
-  memcpy(file, data, sz);
-  free(data);
+  chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
 
   // unmap and such
   munmap(file, sz);
@@ -191,7 +183,7 @@ slave_main (const char *cmd)
   // Process control is setup, data is in place, start the processes
   fork_process_pool(cmd);
 
-  fprintf(stderr, "Waiting for service requests.\n");
+  fprintf(stderr, "slave %d: Waiting for service requests.\n", sid);
 
   // Count number of tasks assigned to each worker
   unsigned worker_iterations[MAX_PROCESSES];
@@ -234,9 +226,7 @@ slave_main (const char *cmd)
           ps_ctl->process_cmd[wid] = RUN;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
-	  fprintf(stderr, "slave: sent new data to worker %d:\n", wid);
-	  fwrite(queue->r_ptr, 1, len, stderr);
-	  fputc('\n', stderr);
+	  fprintf(stderr, "slave %d: sent new data to worker %d\n", sid, wid);
 
           // Now advance the iterator
           queue->len -= len;
@@ -251,7 +241,7 @@ slave_main (const char *cmd)
           }
         } else if (no_work) {
           // No more data, tell it to quit
-          fprintf(stderr, "Requesting worker %d to quit\n", wid);
+          fprintf(stderr, "slave %d: Requesting worker %d to quit\n", sid, wid);
           ps_ctl->process_cmd[wid] = QUIT;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);

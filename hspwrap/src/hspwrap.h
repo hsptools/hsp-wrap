@@ -3,6 +3,12 @@
 
 #include <stdint.h>
 
+// Configuration
+#define NUM_PROCS 16
+#define BUFFER_SIZE (1L<<20)
+#define BCAST_CHUNK_SIZE (4L<<20)
+
+
 // Common utils
 #define MIN(a, b) (((a)<(b))?(a):(b))
 #define MAX(a, b) (((a)>(b))?(a):(b))
@@ -16,6 +22,7 @@
 #define TAG_MASTERCMD 2
 // Tag for slave messages
 #define TAG_REQUEST 3
+
 
 typedef uint32_t blockid_t;
 typedef uint16_t blockcnt_t;
@@ -45,6 +52,7 @@ struct request {
   uint32_t           count;
 };
 
-char *iter_next(char *s, char *e, char *i);
+char *iter_next (char *s, char *e, char *i);
+int   chunked_bcast (void *buffer, int count, int root, MPI_Comm comm);
 
 #endif // HSPWRAP_H__

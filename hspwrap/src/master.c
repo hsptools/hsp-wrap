@@ -43,7 +43,7 @@ void
 master_broadcast_file (const char *path)
 {
   struct stat st;
-  void  *data, *file;
+  void  *file;
   size_t sz;
   int    fd;
 
@@ -71,14 +71,11 @@ master_broadcast_file (const char *path)
   }
 
   // send data (MPI+mmap work-around)
-  data = malloc(sz);
-  memcpy(data, file, sz);
-  MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
-  free(data);
+  chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
 
   // Done broadcasting file, sender will no longer need it (for now)
   fprintf(stderr, "master: broadcasted file %s with size %zu\n", path, sz);
-  munmap(data, sz);
+  munmap(file, sz);
   close(fd);
 }
 
@@ -136,12 +133,14 @@ master_main (int nslaves)
   in_size = in_st.st_size;
 
   // Memory map the file
-  in_data = mmap(NULL, in_size, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, in_fd, 0);
+  in_data = mmap(NULL, in_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE /*| MAP_HUGETLB*/, in_fd, 0);
   if (in_data == MAP_FAILED) {
     close(in_fd);
     fprintf(stderr, "%s: Could not mmap file: %s\n", in_path, strerror(errno));
     exit(EXIT_FAILURE);
   }
+  // Let kernel know we expect to use all the data, sequentially
+  madvise(in_data, in_size, MADV_SEQUENTIAL | MADV_WILLNEED);
 
   // Count number of inputs
   in_cnt=1;

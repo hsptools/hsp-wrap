@@ -10,7 +10,27 @@
 #include "master.h"
 #include "slave.h"
 
-#define NUM_PROCS 12
+void
+print_banner (FILE *f)
+{
+  fputs("  _  _ ___ ___\n"
+	" | || / __| _ \\__ __ ___ _ __ _ _ __\n"
+	" | __ \\__ \\  _/\\ \\V  \\V / '_/ _` | '_ \\\n"
+	" |_||_|___/_|   \\_/\\_/|_| \\__,_| .__/\n"
+	"   HSPwrap version 0.2.0       |_|\n\n", stderr);
+}
+
+
+void
+print_banner_slant (FILE *f)
+{
+  fputs("    __ _________\n"
+	"   / // / __/ _ \\_    _________ ____\n"
+	"  / _  /\\ \\/ ___/ |/|/ / __/ _ `/ _ \\\n"
+	" /_//_/___/_/   |__,__/_/  \\_,_/ .__/\n"
+	"   HSPwrap version 0.2.0      /_/\n\n", stderr);
+}
+
 
 int
 main (int argc, char **argv)
@@ -24,7 +44,7 @@ main (int argc, char **argv)
 
   // Initialize MPI
   int rank, ranks;
-  if (MPI_Init(&argc, &argv) != MPI_SUCCESS) {
+  if (MPI_Init(NULL, NULL) != MPI_SUCCESS) {
     fprintf(stderr, "Error initialize MPI.\n");
     return EXIT_FAILURE;
   }
@@ -36,7 +56,7 @@ main (int argc, char **argv)
   if (rank) {
     slave_init(rank, ranks-1, NUM_PROCS);
   } else {
-    fprintf(stderr, "HSPwrap: Started\n");
+    print_banner_slant(stderr);
     master_init();
   }
 
@@ -131,4 +151,42 @@ char *
 iter_next (char *s, char *e, char *i)
 {
   return iter_fasta_next(s, e, i);
+}
+
+int chunked_bcast (void *buffer, int count, int root, MPI_Comm comm)
+{
+  char   *chunk;
+  size_t  off, chunk_sz;
+  int     rc, rank;
+
+  // Get rank to determine send vs recv
+  rc = MPI_Comm_rank(comm, &rank);
+  if (rc != MPI_SUCCESS) {
+    return rc;
+  }
+
+  // write data (MPI+mmap work-around)
+  chunk = malloc(MIN(BCAST_CHUNK_SIZE, count));
+  for (off=0; off<count; off+=BCAST_CHUNK_SIZE) {
+    chunk_sz = MIN(BCAST_CHUNK_SIZE, count-off);
+    // We are root, get chunk ready to send
+    if (rank == root) {
+      fprintf(stderr,"  Sending chunk %u/%d\n", off/BCAST_CHUNK_SIZE + 1, count/BCAST_CHUNK_SIZE + 1);
+      memcpy(chunk, buffer+off, chunk_sz);
+    }
+    // Broadcast and handle error
+    rc = MPI_Bcast(chunk, chunk_sz, MPI_BYTE, root, comm);
+    if (rc != MPI_SUCCESS) {
+      free(chunk);
+      return rc;
+    }
+    // We are not root, copy chunk to destination
+    if (rank != root) {
+      memcpy(buffer+off, chunk, chunk_sz);
+    }
+  }
+
+  // Done
+  free(chunk);
+  return MPI_SUCCESS;
 }
