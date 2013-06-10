@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
+#include <sys/stat.h>
 
 #include "hsp/process_control.h"
 

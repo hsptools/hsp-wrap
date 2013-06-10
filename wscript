@@ -37,7 +37,7 @@ def configure(conf):
     conf.load('compiler_mpi_c', tooldir=tool_dir)
 
     # Warn about almost anything
-    conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall', '-g', '-O3']) #, '-Werror'])
+    conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall', '-g', '-ggdb']) #, '-Werror'])
 
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)

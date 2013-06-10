@@ -22,7 +22,7 @@
 
 #include "slave.h"
 
-#define BUFFER_SIZE (4L<<20)
+#define BUFFER_SIZE (1L<<20)
 
 struct cache_buffer
 {
@@ -91,27 +91,35 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
 void
 slave_broadcast_shared_file(const char *path)
 {
-  void  *data;
+  void  *data, *shm;
   size_t sz;
 
   // Get file size
   MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
 
   // Get shared-file data, and add to file table
-  data = ps_ctl_add_file(ps_ctl, -1, path, sz);
+  shm = ps_ctl_add_file(ps_ctl, -1, path, sz);
+
+  // write data (MPI+mmap work-around)
+  data = malloc(sz);
+  fprintf(stderr, "slave: Receiving data for file: %s...\n", path);
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+  memcpy(shm, data, sz);
+  free(data);
 }
 
 
 void
 slave_broadcast_work_file(const char *path)
 {
-  void  *data;
+  void  *data, *file;
   size_t sz;
   int    fd;
 
   // Get file size
+  fprintf(stderr, "slave: Receiving work file size...\n");
   MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
+  fprintf(stderr, "slave: size: %zu bytes\n", sz);
 
   // Create file and size it
   if ((fd = open(path, O_CREAT | O_EXCL | O_RDWR,
@@ -123,18 +131,26 @@ slave_broadcast_work_file(const char *path)
     fprintf(stderr, "%s: Failed to resize output file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "slave: Created file %s with size: %zu bytes\n", path, sz);
 
-  // mmap, and write data
-  data = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
-  if (data == MAP_FAILED) {
+  // mmap
+  file = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
+  if (file == MAP_FAILED) {
     close(fd);
     fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "slave: Memory mapped file %s\n", path);
+
+  // write data (MPI+mmap work-around)
+  data = malloc(sz);
+  fprintf(stderr, "slave: Receiving data for file: %s...\n", path);
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+  memcpy(file, data, sz);
+  free(data);
 
   // unmap and such
-  munmap(data, sz);
+  munmap(file, sz);
   close(fd);
 }
 

@@ -623,7 +623,7 @@ stdiowrap_fgetc (FILE *stream)
 {
   trace_fn("%p", stream);
   MAP_WF_E(wf, stream, EOF);
-  unsigned char *ubound = wf->data + wf->size;	// upper bound
+  char *ubound = wf->data + wf->size;	// upper bound
 
   // Make sure there is a character to be read
   if (wf->pos >= ubound) {

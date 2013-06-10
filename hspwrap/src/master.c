@@ -43,7 +43,7 @@ void
 master_broadcast_file (const char *path)
 {
   struct stat st;
-  void  *data;
+  void  *data, *file;
   size_t sz;
   int    fd;
 
@@ -63,13 +63,18 @@ master_broadcast_file (const char *path)
   MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
 
   // Read and broadcast data into slave's SHMs
-  data = mmap(NULL, sz, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
-  if (data == MAP_FAILED) {
+  file = mmap(NULL, sz, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
+  if (file == MAP_FAILED) {
     close(fd);
     fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
+
+  // send data (MPI+mmap work-around)
+  data = malloc(sz);
+  memcpy(data, file, sz);
   MPI_Bcast(data, sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+  free(data);
 
   // Done broadcasting file, sender will no longer need it (for now)
   fprintf(stderr, "master: broadcasted file %s with size %zu\n", path, sz);
@@ -167,6 +172,11 @@ master_main (int nslaves)
     // Wait on our sends to complete if needed
     wait_sends(&ctx, slave_idx);
 
+    // Free old temporary buffer
+    if (s->wu_data) {
+      free(s->wu_data);
+    }
+
     // Got a request, service it
     switch (s->request.type) {
     case REQ_WORKUNIT:
@@ -184,11 +194,13 @@ master_main (int nslaves)
       }
 
       // Prepare work unit for data
-      s->wu_data         = in_s;
+      s->workunit.len    = in_e - in_s;
       s->workunit.type   = WU_TYPE_DATA;
       s->workunit.blk_id = seq_idx;
       s->workunit.count  = wu_nseqs;
-      s->workunit.len    = in_e - in_s;
+      // mmap hack again
+      s->wu_data         = malloc(s->workunit.len);
+      memcpy(s->wu_data, in_s, s->workunit.len);
 
       // Advance our iterator
       in_s = in_e;
