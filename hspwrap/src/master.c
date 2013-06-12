@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <errno.h>
 #include <error.h>
 #include <fcntl.h>
@@ -95,39 +96,42 @@ master_main (int nslaves)
 
   char *in_s, *in_e;
     
-  int max_nseqs, wu_nseqs, rc, slave_idx, seq_idx, i;
+  int max_nseqs, wu_nseqs, slave_idx, seq_idx, rc, i;
+  int req_idx, req_type, nreqs;
 
   // Init data structures
+  seq_idx     = 0;
+  nreqs       = nslaves * 3;
   ctx.nslaves = nslaves;
   ctx.slaves        = malloc(nslaves * sizeof(struct slave_info));
-  ctx.mpi_req       = malloc(nslaves * sizeof(MPI_Request));
-  ctx.mpi_send_wu   = malloc(nslaves * sizeof(MPI_Request));
-  ctx.mpi_send_data = malloc(nslaves * sizeof(MPI_Request));
+  ctx.mpi_req       = malloc(nreqs   * sizeof(MPI_Request));
 
-  if (!ctx.slaves || !ctx.mpi_req ||
-      !ctx.mpi_send_wu || !ctx.mpi_send_data) {
+  if (!ctx.slaves || !ctx.mpi_req) {
     fprintf(stderr, "master: failed to allocate room for state\n");
     exit(EXIT_FAILURE);
   }
 
-  for (i=0; i<nslaves; i++) {
+  for (i=0; i<nslaves; ++i) {
     ctx.slaves[i].rank = i+1;
-    ctx.slaves[i].sflag = 0;
+    ctx.slaves[i].sflag = 1; // Waiting on 1:request 2:info 3:data
     ctx.slaves[i].wu_data = NULL;
   }
+  for (i=0; i<nreqs; ++i) {
+    ctx.mpi_req[i] = MPI_REQUEST_NULL;
+  } 
 
   // Load Query file
   // TODO: break "load, and map" code into a function
   in_path = getenv("HSP_QFILE");
   if ((in_fd = open(in_path, O_RDONLY)) == -1) {
-    fprintf(stderr, "%s: Could not open file: %s\n", in_path, strerror(errno));
+    fprintf(stderr, "master: %s: Could not open file: %s\n", in_path, strerror(errno));
     exit(EXIT_FAILURE);
   }
 
   // Get file size
   if (fstat(in_fd, &in_st) < 0) {
     close(in_fd);
-    fprintf(stderr, "%s: Could not stat file: %s\n", in_path, strerror(errno));
+    fprintf(stderr, "master: %s: Could not stat file: %s\n", in_path, strerror(errno));
     exit(EXIT_FAILURE);
   }
   in_size = in_st.st_size;
@@ -136,7 +140,7 @@ master_main (int nslaves)
   in_data = mmap(NULL, in_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE /*| MAP_HUGETLB*/, in_fd, 0);
   if (in_data == MAP_FAILED) {
     close(in_fd);
-    fprintf(stderr, "%s: Could not mmap file: %s\n", in_path, strerror(errno));
+    fprintf(stderr, "master: %s: Could not mmap file: %s\n", in_path, strerror(errno));
     exit(EXIT_FAILURE);
   }
   // Let kernel know we expect to use all the data, sequentially
@@ -161,71 +165,111 @@ master_main (int nslaves)
                    &ctx.mpi_req[i]);
   }
 
-  // Hand out work units
+  // Update slave states
   in_s = in_data;
-  for (seq_idx=0; seq_idx < in_cnt; seq_idx += wu_nseqs) {
-    // Wait until any slave requests a work unit
-    MPI_Waitany(nslaves, ctx.mpi_req, &slave_idx, MPI_STATUSES_IGNORE);
-    s = &ctx.slaves[slave_idx];
+  int nidxs;
+  int *idxs = malloc(nreqs*sizeof(int));
+  while (seq_idx < in_cnt) {
+    // Wait until any request completes
+    MPI_Waitsome(nreqs, ctx.mpi_req, &nidxs, idxs, MPI_STATUSES_IGNORE);
 
-    // Wait on our sends to complete if needed
-    wait_sends(&ctx, slave_idx);
+    for (i=0; i<nidxs; ++i) {
+      req_idx = idxs[i];
 
-    // Free old temporary buffer
-    if (s->wu_data) {
-      free(s->wu_data);
+      // Determine the slave and request-type associated with this request
+      req_type  = req_idx / nslaves;
+      slave_idx = req_idx % nslaves;
+      s = &ctx.slaves[slave_idx];
+
+      // Wait on our sends to complete if needed
+      //wait_sends(&ctx, slave_idx);
+
+      fprintf(stderr, "master: MPI-Request completed (slave: %d, type: %d flag: %x -> ", slave_idx, req_type, s->sflag);
+      switch (req_type) {
+      case 0:
+	s->sflag &= ~1;
+	break;
+      case 1:
+	s->sflag &= ~2;
+	break;
+      case 2:
+	s->sflag &= ~4;
+	break;
+      default:
+	// Programming error
+	assert(0);
+	break;
+      }
+      fprintf(stderr, "%x)\n", s->sflag);
     }
 
-    // Got a request, service it
-    switch (s->request.type) {
-    case REQ_WORKUNIT:
-      // Figure out how many WUs to actually send (fair)
-      wu_nseqs = s->request.count;
-      if (wu_nseqs > max_nseqs) {
-        fprintf(stderr, "Slave %d requested %d units, limiting to %d.\n",
-                slave_idx, wu_nseqs, max_nseqs); 
-        wu_nseqs = max_nseqs;
-      } else {
-        fprintf(stderr, "Slave %d requested %d units.\n", slave_idx, wu_nseqs);
+    for (i=0; i<nslaves; ++i) {
+      s = &ctx.slaves[i];
+      if (!s->sflag) {
+	
+	// Data is sent, we can free the temp buffer
+	if (s->wu_data) {
+	  free(s->wu_data);
+	  s->wu_data = NULL;
+	}
+
+	// Hand out work units
+	// Got a request, service it
+	switch (s->request.type) {
+	case REQ_WORKUNIT:
+	  // Figure out how many WUs to actually send (fair)
+	  wu_nseqs = s->request.count;
+	  if (wu_nseqs > max_nseqs) {
+	    fprintf(stderr, "master: Slave %d requested %d units, limiting to %d.\n",
+		slave_idx, wu_nseqs, max_nseqs); 
+	    wu_nseqs = max_nseqs;
+	  } else {
+	    fprintf(stderr, "master: Slave %d requested %d units.\n", slave_idx, wu_nseqs);
+	  }
+
+	  // Determine size of all the data we need
+	  for (in_e=in_s, i=wu_nseqs; i; --i) {
+	    in_e = iter_next(in_data, in_data+in_size, in_e);
+	  }
+
+	  // Prepare work unit for data
+	  s->workunit.len    = in_e - in_s;
+	  s->workunit.type   = WU_TYPE_DATA;
+	  s->workunit.blk_id = seq_idx;
+	  s->workunit.count  = wu_nseqs;
+	  // mmap hack again
+	  s->wu_data         = malloc(s->workunit.len);
+	  memcpy(s->wu_data, in_s, s->workunit.len);
+
+	  // Advance our iterator
+	  in_s = in_e;
+
+	  // Send work unit information
+	  MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
+	      TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_req[nslaves + slave_idx]);
+	  // Send actual data
+	  MPI_Isend(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
+	      TAG_DATA, MPI_COMM_WORLD, &ctx.mpi_req[nslaves*2 + slave_idx]);
+	  // Finally, re-post a receive for this rank
+	  rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
+	      TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
+
+	  // Record that we are need to wait for sends and a new request before doing any action
+	  s->sflag = 7;
+	  // Advance the counter
+	  seq_idx += wu_nseqs;
+	  break;
+
+	default:
+	  // Unknown request
+	  fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
+	      s->rank);
+	  exit(EXIT_FAILURE);
+	}
       }
-
-      // Determine size of all the data we need
-      for (in_e=in_s, i=wu_nseqs; i; --i) {
-        in_e = iter_next(in_data, in_data+in_size, in_e);
-      }
-
-      // Prepare work unit for data
-      s->workunit.len    = in_e - in_s;
-      s->workunit.type   = WU_TYPE_DATA;
-      s->workunit.blk_id = seq_idx;
-      s->workunit.count  = wu_nseqs;
-      // mmap hack again
-      s->wu_data         = malloc(s->workunit.len);
-      memcpy(s->wu_data, in_s, s->workunit.len);
-
-      // Advance our iterator
-      in_s = in_e;
-
-      // Send work unit information
-      MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
-                TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_send_wu[slave_idx]);
-      // Send actual data
-      MPI_Isend(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
-                TAG_DATA, MPI_COMM_WORLD, &ctx.mpi_send_data[slave_idx]);
-      // Record that the the two MPI requests are valid so we can wait later
-      s->sflag = 1;
-      // Finally, re-post a receive for this rank
-      rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
-                     TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
-      break;
-
-    default:
-      // Unknown request
-      fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
-              s->rank);
-      exit(EXIT_FAILURE);
     }
-  }
+    
+  } // End service loop
 
   fprintf(stderr, "master: Done issuing jobs\n");
 
@@ -234,11 +278,7 @@ master_main (int nslaves)
   // sooner, thus a chance of quicker shutdown
 
   // Done handing out units, wait for all slaves' final requests
-  MPI_Waitall(nslaves, ctx.mpi_req, MPI_STATUSES_IGNORE);
-  // Wait for all our previous sends
-  for (i=0; i<nslaves; ++i) {
-    wait_sends(&ctx, i);
-  }
+  MPI_Waitall(nreqs, ctx.mpi_req, MPI_STATUSES_IGNORE);
 
   // Tell all slaves to exit (maybe can be done slave-by-slave)
   for (i=0; i<nslaves; ++i) {
@@ -247,10 +287,10 @@ master_main (int nslaves)
     s->workunit.len    = 0;
     s->workunit.blk_id = 0;
     MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
-              TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_send_wu[slave_idx]);
+              TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_req[nslaves + slave_idx]);
   }
   // Wait on all exit sends to complete
-  MPI_Waitall(nslaves, ctx.mpi_send_wu, MPI_STATUSES_IGNORE);
+  MPI_Waitall(nreqs, ctx.mpi_req, MPI_STATUSES_IGNORE);
 
   // Waiting on all ranks to acknowledge the EXIT
   MPI_Barrier(MPI_COMM_WORLD);
