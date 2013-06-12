@@ -39,14 +39,15 @@ static void push_work (wid_t wid, const char *data, size_t len);
 static void pull_results (struct writer_ctx *w, wid_t wid);
 
 // TODO: add slave_ctx to wrap this stuff
+extern struct process_pool_ctl *pool_ctl;
 struct writer_ctx writer;
 struct process_control *ps_ctl;
 int    sid;
+char  *outdir, *workdir;
 
 void
 slave_init (int slave_idx, int nslaves, int nprocesses)
 {
-  char *outdir, *workdir;
   int rc, i;
 
   // Create output directories
@@ -74,9 +75,6 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
     fprintf(stderr, "Could not change to work directory: %s\n", strerror(errno));
   }
 
-  // Cleanup
-  free(workdir);
-
   // Prepare process control structure and streaming SHMs
   ps_ctl = ps_ctl_init(nprocesses, NULL);
 
@@ -86,6 +84,10 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
   }
   sid = slave_idx;
 }
+
+
+// Cleanup
+//free(workdir);
 
 
 void
@@ -161,7 +163,7 @@ slave_main (const char *cmd)
   // TODO: Maybe move some stuff to a slave_init() function
   
   // Spawn and initialize writer thread
-  writer_start(&writer,BUFFER_SIZE * ps_ctl->nprocesses);
+  writer_start(&writer, BUFFER_SIZE * ps_ctl->nprocesses);
 
   // Initial (empty) data
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
@@ -181,10 +183,9 @@ slave_main (const char *cmd)
   // least cold-start the processes before receiving all the data.
 
   // Process control is setup, data is in place, start the processes
-  //MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
   fprintf(stderr, "slave %d: past barrier 1\n", sid);
-  fork_process_pool(cmd);
-  fprintf(stderr, "slave %d: past fork bomb\n", sid);
+  process_pool_spawn(pool_ctl, workdir, ps_ctl->nprocesses);
   MPI_Barrier(MPI_COMM_WORLD);
   fprintf(stderr, "slave %d: past barrier 2\n", sid);
 
@@ -266,7 +267,7 @@ slave_main (const char *cmd)
         break;
 
       case FAILED:
-        fprintf(stderr, "PROCESS FAILED\n");
+        fprintf(stderr, "!!!!!! PROCESS FAILED !!!!!!\n");
         break;
       case DONE:
         //fprintf(stderr, "PROCESS DONE\n");
@@ -286,7 +287,10 @@ slave_main (const char *cmd)
     }
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
   gettimeofday(tv+1, NULL);
+
+  MPI_Finalize();
 
   // Flush last bit of data
   pthread_mutex_lock(&ps_ctl->lock);
@@ -301,18 +305,15 @@ slave_main (const char *cmd)
   pthread_join(writer.thread, NULL);
   fprintf(stderr, "Writer thread successfully exited\n");
 
-  // Waiting on all ranks to acknowledge the EXIT
-  MPI_Barrier(MPI_COMM_WORLD);
-
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
            + (tv[1].tv_usec - tv[0].tv_usec);
 
   putchar('\n');
-  for (i = 0; i < ps_ctl->nprocesses; ++i) {
-    printf("Worker %2u iterations: %5u\n", i, worker_iterations[i]);
+  for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+    printf(stderr, "Slave %d: Worker %2u iterations: %5u\n", sid, wid, worker_iterations[wid]);
   }
 
-  printf("Time taken: %lfs\n",  ((double)t) / 1000000.0);
+  printf(stderr, "Time taken: %lfs\n",  ((double)t) / 1000000.0);
   /*
   printf("Time taken: %lfs (%lfms average)\n",
       ((double)t) / 1000000.0,
@@ -359,36 +360,6 @@ mkpath (const char *path, mode_t mode)
 }
 
 
-static void
-fork_process_pool (const char *cmd)
-{
-  pid_t tmp_pid, hspwrap_pid, pool_pid;
-
-  hspwrap_pid = getpid();
-
-  if ((tmp_pid = fork()) > 0) {
-    // parent process (done)
-    return;
-  } else if (!tmp_pid) {
-    // temporary process
-    if ((pool_pid = fork()) > 0) {
-      // still in temporary process, kill ourself
-      kill(getpid(), SIGKILL);
-    } else if (!pool_pid) {
-      // forker process
-      process_pool_start(hspwrap_pid, ps_ctl->nprocesses, cmd);
-    } else {
-      fprintf(stderr, "Could not fork process pool.  Terminating.\n");
-      exit(EXIT_FAILURE);
-    }
-    exit(EXIT_SUCCESS);
-  } else {
-    fprintf(stderr, "Could not fork temporary process.  Terminating.\n");
-    exit(EXIT_FAILURE);
-  }
-}
-
-
 static int
 request_work (struct cache_buffer **queue)
 {
@@ -409,17 +380,17 @@ request_work (struct cache_buffer **queue)
   req.count = ps_ctl->nprocesses - cnt;
 
   fprintf(stderr,"slave %d: requesting work...\n", sid);
-  rc = MPI_Isend(&req, sizeof(struct request), MPI_BYTE, 0,
-           TAG_REQUEST, MPI_COMM_WORLD, &mpi_req[0]);
+  rc = MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
+           TAG_REQUEST, MPI_COMM_WORLD);
   fprintf(stderr,"slave %d: sent request %d\n", sid, rc);
 
   // Read work unit information
   fprintf(stderr,"slave %d: receiving work unit...\n", sid);
-  rc = MPI_Irecv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
-           TAG_WORKUNIT, MPI_COMM_WORLD, &mpi_req[1]);
+  rc = MPI_Recv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
+           TAG_WORKUNIT, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
 
-  fprintf(stderr,"slave %d: waiting for response...\n", sid);
-  MPI_Waitall(2, mpi_req, MPI_STATUSES_IGNORE);
+  //fprintf(stderr,"slave %d: waiting for response...\n", sid);
+  //MPI_Waitall(2, mpi_req, MPI_STATUSES_IGNORE);
   fprintf(stderr,"slave %d: received work unit (type: %d, size: %d) %d\n", sid, wu.type, wu.len, rc);
 
   // Figure out what to do with the response

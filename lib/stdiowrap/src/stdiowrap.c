@@ -21,8 +21,8 @@
 #include "stdiowrap/stdiowrap.h"
 #include "stdiowrap-internal.h"
 
-#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
-//#define trace_fn(fmt, ...) 
+//#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
+#define trace_fn(fmt, ...) 
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal State

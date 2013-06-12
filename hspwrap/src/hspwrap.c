@@ -7,8 +7,11 @@
 #include <mpi.h>
 
 #include "hspwrap.h"
+#include "process_pool.h"
 #include "master.h"
 #include "slave.h"
+
+struct process_pool_ctl *pool_ctl;
 
 void
 print_banner (FILE *f)
@@ -41,6 +44,9 @@ main (int argc, char **argv)
     fputs("usage: hspwrap EXEFILE\n", stderr);
     exit(EXIT_FAILURE);
   }
+
+  // Pre-fork process pool (even on master)
+  pool_ctl = process_pool_fork();
 
   // Initialize MPI
   int rank, ranks;
@@ -112,7 +118,6 @@ main (int argc, char **argv)
     master_main(ranks-1);
   }
 
-  MPI_Finalize();
   return 0;
 }
 
@@ -190,3 +195,4 @@ int chunked_bcast (void *buffer, int count, int root, MPI_Comm comm)
   free(chunk);
   return MPI_SUCCESS;
 }
+

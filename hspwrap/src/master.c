@@ -13,6 +13,7 @@
 
 #include "hspwrap.h"
 #include "master.h"
+#include "process_pool.h"
 
 struct slave_info {
   int rank;                    // Rank of this slave
@@ -32,6 +33,7 @@ struct master_ctx {
 
 static void wait_sends (struct master_ctx *ctx, int slave_idx);
 
+extern struct process_pool_ctl *pool_ctl;
 
 void
 master_init ()
@@ -98,6 +100,8 @@ master_main (int nslaves)
     
   int max_nseqs, wu_nseqs, slave_idx, seq_idx, rc, i;
   int req_idx, req_type, nreqs;
+  int nrunning;
+  int outstandings[nslaves], outstanding;
 
   // Init data structures
   seq_idx     = 0;
@@ -118,7 +122,9 @@ master_main (int nslaves)
     ctx.slaves[i].rank = i+1;
     ctx.slaves[i].sflag = 1; // Waiting on 1:request 2:info 3:data
     ctx.slaves[i].wu_data = malloc(BUFFER_SIZE);
+    outstandings[i] = 0;
   }
+  outstanding = 0;
   for (i=0; i<nreqs; ++i) {
     ctx.mpi_req[i] = MPI_REQUEST_NULL;
   } 
@@ -161,30 +167,36 @@ master_main (int nslaves)
   max_nseqs = in_cnt / nslaves;
   wu_nseqs  = 1;
 
-  //MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
   fprintf(stderr, "master: past barrier 1\n");
+  process_pool_spawn(pool_ctl, ".", -1);
   MPI_Barrier(MPI_COMM_WORLD);
   fprintf(stderr, "master: past barrier 2\n");
   
   // Post a receive work request for each slave
-  for (i=0; i<nslaves; i++) {
-    rc = MPI_Irecv(&ctx.slaves[i].request, sizeof(struct request), MPI_BYTE,
-                   ctx.slaves[i].rank, TAG_REQUEST, MPI_COMM_WORLD,
-                   &ctx.mpi_req[i]);
+  for (slave_idx=0; slave_idx<nslaves; ++slave_idx) {
+    rc = MPI_Irecv(&ctx.slaves[slave_idx].request, sizeof(struct request), MPI_BYTE,
+                   ctx.slaves[slave_idx].rank, TAG_REQUEST, MPI_COMM_WORLD,
+                   &ctx.mpi_req[slave_idx]);
+    outstandings[slave_idx]++;
+    outstanding++;
   }
 
   // Update slave states
   in_s = in_data;
   while (seq_idx < in_cnt) {
     // Wait until any request completes
-    MPI_Waitsome(nreqs, ctx.mpi_req, &nidxs, idxs, MPI_STATUSES_IGNORE);
+    MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
 
-    for (i=0; i<nidxs; ++i) {
-      req_idx = idxs[i];
+    //MPI_Waitsome(nreqs, ctx.mpi_req, &nidxs, idxs, MPI_STATUSES_IGNORE);
+    //for (i=0; i<nidxs; ++i) {
+    //  req_idx = idxs[i];
 
       // Determine the slave and request-type associated with this request
       req_type  = req_idx / nslaves;
       slave_idx = req_idx % nslaves;
+      outstandings[slave_idx]--;
+      outstanding--;
       s = &ctx.slaves[slave_idx];
 
       // Wait on our sends to complete if needed
@@ -207,10 +219,11 @@ master_main (int nslaves)
 	break;
       }
       fprintf(stderr, "%x)\n", s->sflag);
-    }
-
-    for (i=0; i<nslaves; ++i) {
-      s = &ctx.slaves[i];
+    
+    //}
+    //
+    //for (i=0; i<nslaves; ++i) {
+    //  s = &ctx.slaves[i];
       if (!s->sflag) {
 	
 	// Hand out work units
@@ -254,6 +267,8 @@ master_main (int nslaves)
 	  // Finally, re-post a receive for this rank
 	  rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
 	      TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
+	  outstandings[slave_idx]++;
+	  outstanding++;
 	  fprintf(stderr, "master: Slave %d irecv: %d\n", slave_idx, rc);
 
 	  // Record that we are need to wait for sends and a new request before doing any action
@@ -269,35 +284,61 @@ master_main (int nslaves)
 	  exit(EXIT_FAILURE);
 	}
       }
-    }
+    //}
     
   } // End service loop
 
   fprintf(stderr, "master: Done issuing jobs\n");
 
-  // TODO: Consider doing a waitany, then send the exit request immediately
-  // instead of waiting on *all* the ranks. Should allow ranks to start writing
-  // sooner, thus a chance of quicker shutdown
-
-  // Done handing out units, wait for all slaves' final requests
-  MPI_Waitall(nreqs, ctx.mpi_req, MPI_STATUSES_IGNORE);
-
   // Tell all slaves to exit (maybe can be done slave-by-slave)
-  for (i=0; i<nslaves; ++i) {
-    s = &ctx.slaves[i];
-    s->workunit.type   = WU_TYPE_EXIT;
-    s->workunit.len    = 0;
-    s->workunit.blk_id = 0;
-    MPI_Isend(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
-              TAG_WORKUNIT, MPI_COMM_WORLD, &ctx.mpi_req[nslaves + slave_idx]);
+  for (nrunning=nslaves; nrunning; nrunning--) {
+    fprintf(stderr, "master: Waiting for %d slaves to exit.\n", nrunning);
+    fprintf(stderr, "master: Outstanding: %d\n", outstanding);
+    for (i=0; i<nslaves; ++i) {
+      fprintf(stderr, "master: Slave %d outstanding: %d\n", i, outstandings[i]);
+    }
+
+    MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
+    // Determine the slave and request-type associated with this request
+    req_type  = req_idx / nslaves;
+    slave_idx = req_idx % nslaves;
+    s = &ctx.slaves[slave_idx];
+
+    outstandings[slave_idx]--;
+    outstanding--;
+    
+    switch (s->request.type) {
+    case REQ_WORKUNIT:
+      // Kill the slave
+      fprintf(stderr, "master: Terminating slave %d.\n", slave_idx);
+      s->workunit.type   = WU_TYPE_EXIT;
+      s->workunit.len    = 0;
+      s->workunit.blk_id = 0;
+      MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
+		TAG_WORKUNIT, MPI_COMM_WORLD);
+      fprintf(stderr, "master: Terminated slave %d.\n", slave_idx);
+      break;
+
+    default:
+      // Unknown request
+      fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
+	  s->rank);
+      exit(EXIT_FAILURE);
+    }
   }
-  // Wait on all exit sends to complete
-  MPI_Waitall(nreqs, ctx.mpi_req, MPI_STATUSES_IGNORE);
 
-  // Waiting on all ranks to acknowledge the EXIT
+  // Safety blanket
+  /*
+  fprintf(stderr, "master: Freeing any outstanding requests\n");
+  for (i=0; i<nreqs; ++i) {
+    MPI_Request_free(&ctx.mpi_req[i]);
+  }
+  */
+
   MPI_Barrier(MPI_COMM_WORLD);
-
   fprintf(stderr, "master: All jobs complete, proceeding with shutdown\n");
+  //sleep(5); // FIXME
+  MPI_Finalize();
   return 0;
 }
 
