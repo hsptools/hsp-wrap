@@ -181,7 +181,12 @@ slave_main (const char *cmd)
   // least cold-start the processes before receiving all the data.
 
   // Process control is setup, data is in place, start the processes
+  //MPI_Barrier(MPI_COMM_WORLD);
+  fprintf(stderr, "slave %d: past barrier 1\n", sid);
   fork_process_pool(cmd);
+  fprintf(stderr, "slave %d: past fork bomb\n", sid);
+  MPI_Barrier(MPI_COMM_WORLD);
+  fprintf(stderr, "slave %d: past barrier 2\n", sid);
 
   fprintf(stderr, "slave %d: Waiting for service requests.\n", sid);
 
@@ -390,7 +395,8 @@ request_work (struct cache_buffer **queue)
   struct cache_buffer *b, *tail;
   struct request  req;
   struct workunit wu;
-  int cnt;
+  MPI_Request mpi_req[2];
+  int cnt, rc;
 
   // See how much data we have and find tail
   for (cnt = 0, tail = NULL, b = *queue; b; b = b->next) {
@@ -403,14 +409,18 @@ request_work (struct cache_buffer **queue)
   req.count = ps_ctl->nprocesses - cnt;
 
   fprintf(stderr,"slave %d: requesting work...\n", sid);
-  MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
-           TAG_REQUEST, MPI_COMM_WORLD);
+  rc = MPI_Isend(&req, sizeof(struct request), MPI_BYTE, 0,
+           TAG_REQUEST, MPI_COMM_WORLD, &mpi_req[0]);
+  fprintf(stderr,"slave %d: sent request %d\n", sid, rc);
 
   // Read work unit information
   fprintf(stderr,"slave %d: receiving work unit...\n", sid);
-  MPI_Recv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
-           TAG_WORKUNIT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-  fprintf(stderr,"slave %d: received work unit (type: %d, size: %d)\n", sid, wu.type, wu.len);
+  rc = MPI_Irecv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
+           TAG_WORKUNIT, MPI_COMM_WORLD, &mpi_req[1]);
+
+  fprintf(stderr,"slave %d: waiting for response...\n", sid);
+  MPI_Waitall(2, mpi_req, MPI_STATUSES_IGNORE);
+  fprintf(stderr,"slave %d: received work unit (type: %d, size: %d) %d\n", sid, wu.type, wu.len, rc);
 
   // Figure out what to do with the response
   switch (wu.type) {
@@ -426,9 +436,9 @@ request_work (struct cache_buffer **queue)
     b->len   = wu.len;
     b->next  = NULL;
     fprintf(stderr,"slave %d: receiving work unit data...\n", sid);
-    MPI_Recv(b->data, wu.len, MPI_BYTE, 0,
+    rc = MPI_Recv(b->data, wu.len, MPI_BYTE, 0,
              TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    fprintf(stderr,"slave %d: received work unit data\n", sid);
+    fprintf(stderr,"slave %d: received work unit data %d\n", sid, rc);
     // malloc'd structure is freed once queue page is exhausted
 
     // Add to end of queue
