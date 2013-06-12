@@ -5,7 +5,7 @@
 
 // Configuration
 #define NUM_PROCS 16
-#define BUFFER_SIZE (1L<<20)
+#define BUFFER_SIZE (4L<<20)
 #define BCAST_CHUNK_SIZE (4L<<20)
 
 

@@ -16,7 +16,7 @@ def build(bld):
     ]
 
     bld.program(source=src, target='hspwrap',
-                use='hsp YAML PTHREAD', env=mpienv, lib='rt')
+                use='hsp YAML PTHREAD', env=mpienv, lib='dbfork_64 rt')
 
     #bld.program(lib='rt', source='src/hspwrap-ev.c', target='hspwrap-ev',
     #            use='hsp YAML ev PTHREAD M')

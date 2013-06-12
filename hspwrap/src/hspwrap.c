@@ -171,7 +171,7 @@ int chunked_bcast (void *buffer, int count, int root, MPI_Comm comm)
     chunk_sz = MIN(BCAST_CHUNK_SIZE, count-off);
     // We are root, get chunk ready to send
     if (rank == root) {
-      fprintf(stderr,"  Sending chunk %u/%d\n", off/BCAST_CHUNK_SIZE + 1, count/BCAST_CHUNK_SIZE + 1);
+      //fprintf(stderr,"  Sending chunk %u/%d\n", off/BCAST_CHUNK_SIZE + 1, count/BCAST_CHUNK_SIZE + 1);
       memcpy(chunk, buffer+off, chunk_sz);
     }
     // Broadcast and handle error

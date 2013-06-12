@@ -21,8 +21,8 @@
 #include "stdiowrap/stdiowrap.h"
 #include "stdiowrap-internal.h"
 
-//#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
-#define trace_fn(fmt, ...) 
+#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
+//#define trace_fn(fmt, ...) 
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal State
@@ -816,31 +816,57 @@ stdiowrap_fflush (FILE *stream)
 extern size_t
 stdiowrap_fwrite (const void *ptr, size_t size, size_t nmemb, FILE *stream)
 {
+  size_t nmemb_remain, nmemb_write;
+
   trace_fn("%p, %zu, %zu, %p", ptr, size, nmemb, stream);
   MAP_WF_E(wf, stream, 0);
 
-  // Check bounds
-  if ((wf->pos + size) > (wf->data + wf->tsize)) {
-    // No room for even one element
-    errno = ENOSPC;
-    return 0;
+  nmemb_remain = nmemb;
+  nmemb_write  = 0;
+
+  while (nmemb_remain) {
+
+    // Check bounds
+    if ((wf->pos + size) > (wf->data + wf->tsize)) {
+      // No room for even one element
+    } else if ((wf->pos + size * nmemb_remain) > (wf->data + wf->tsize)) {
+      // Wants too many elements; trim.
+      nmemb_write  = ((wf->data + wf->tsize) - wf->pos) / size;
+      nmemb_remain = nmemb_remain - nmemb_write;
+    } else {
+      // Enough room to handle the whole request
+      nmemb_write  = nmemb;
+      nmemb_remain = 0;
+    }
+
+    // Write if we have any capacity
+    if (nmemb_write) {
+      // Copy into requested buffer
+      memcpy(wf->pos, ptr, nmemb_write * size);
+
+      // Advance cursor
+      wf->pos += nmemb_write * size;
+
+      // Advance record of data segment size
+      wf->size += nmemb_write * size;
+
+      // Tell the SHM about the increased filled portion as well
+      *(wf->psize) = wf->size;
+    }
+
+    // Request more room if we have remaining members
+    if (nmemb_remain) {
+      // Request more space
+      if (wait_nospace(wf)) {
+        // Got more space, resume
+	ptr += nmemb_write * size;
+        continue;
+      } else {
+        // Request denied, error
+	return nmemb - nmemb_remain;
+      }
+    }
   }
-  if ((wf->pos + size * nmemb) > (wf->data + wf->tsize)) {
-    // Wants too many elements; trim.
-    nmemb = ((wf->data + wf->tsize) - wf->pos) / size;
-  }
-
-  // Copy into requested buffer
-  memcpy(wf->pos, ptr, nmemb * size);
-
-  // Advance cursor
-  wf->pos += nmemb * size;
-
-  // Advance record of data segment size
-  wf->size += nmemb * size;
-
-  // Tell the SHM about the increased filled portion as well
-  *(wf->psize) = wf->size;
 
   // Return item count
   return nmemb;

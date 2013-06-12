@@ -402,12 +402,15 @@ request_work (struct cache_buffer **queue)
   req.type  = REQ_WORKUNIT;
   req.count = ps_ctl->nprocesses - cnt;
 
+  fprintf("slave %d: requesting work...\n", sid);
   MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
            TAG_REQUEST, MPI_COMM_WORLD);
 
   // Read work unit information
+  fprintf("slave %d: receiving work unit...\n", sid);
   MPI_Recv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
            TAG_WORKUNIT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+  fprintf("slave %d: received work unit (type: %d, size: %d)\n", sid, wu.type, wu.len);
 
   // Figure out what to do with the response
   switch (wu.type) {
@@ -422,8 +425,11 @@ request_work (struct cache_buffer **queue)
     b->count = wu.count;
     b->len   = wu.len;
     b->next  = NULL;
+    fprintf("slave %d: receiving work unit data...\n", sid);
     MPI_Recv(b->data, wu.len, MPI_BYTE, 0,
              TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    fprintf("slave %d: received work unit data\n", sid);
+    // malloc'd structure is freed once queue page is exhausted
 
     // Add to end of queue
     if (tail) {

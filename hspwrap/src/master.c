@@ -185,6 +185,8 @@ master_main (int nslaves)
         fprintf(stderr, "Slave %d requested %d units, limiting to %d.\n",
                 slave_idx, wu_nseqs, max_nseqs); 
         wu_nseqs = max_nseqs;
+      } else {
+        fprintf(stderr, "Slave %d requested %d units.\n", slave_idx, wu_nseqs);
       }
 
       // Determine size of all the data we need
