@@ -395,10 +395,12 @@ wait_eod (struct WFILE *wf)
 
   // Not a stream, don't even try!
   if (!wf->is_stream) {
+    fprintf(stderr, "stdiowrap: worker %d (pid: %d): EOD, not a stream. Claiming EOF.\n", wid, getpid());
     return 0;
   }
 
   // Request service
+  fprintf(stderr, "stdiowrap: worker %d (pid: %d): EOD, requesting service...\n", wid, getpid());
   pthread_mutex_lock(&ps_ctl->lock);
   set_status(EOD);
   pthread_cond_signal(&ps_ctl->need_service);
@@ -410,6 +412,7 @@ wait_eod (struct WFILE *wf)
   cmd = get_command();
   switch (cmd) {
   case RUN:
+    fprintf(stderr, "stdiowrap: worker %d (pid: %d): RUN, got more data.\n", wid, getpid());
     // More data, update WFILE and continue
     wf->offset += wf->size;
     wf->size    = *wf->psize;
@@ -421,16 +424,19 @@ wait_eod (struct WFILE *wf)
     break;
 
   case QUIT:
+    fprintf(stderr, "stdiowrap: worker %d (pid: %d): QUIT, no more data. Claiming EOF.\n", wid, getpid());
     ret = 0;
     break;
 
   case SUSPEND:
   case RESTORE:
     fprintf(stderr, "stdiowrap: Suspend/Restore is not yet implemented\n");
+    pthread_mutex_unlock(&ps_ctl->lock);
     exit(1);
     break;
   default:
     fprintf(stderr, "stdiowrap: Unknown command from controller (%d). Exiting\n", cmd);
+    pthread_mutex_unlock(&ps_ctl->lock);
     exit(1);
     break;
   }

@@ -69,7 +69,7 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
     fprintf(stderr, "Could not create work directory: %s\n", strerror(rc));
     exit(EXIT_FAILURE);
   }
-    
+
   // The output directory should exist, now change dir
   if (chdir(workdir)) {
     fprintf(stderr, "Could not change to work directory: %s\n", strerror(errno));
@@ -161,7 +161,7 @@ slave_main (const char *cmd)
   no_work = 0;
 
   // TODO: Maybe move some stuff to a slave_init() function
-  
+
   // Spawn and initialize writer thread
   writer_start(&writer, BUFFER_SIZE * ps_ctl->nprocesses);
 
@@ -195,6 +195,16 @@ slave_main (const char *cmd)
   unsigned worker_iterations[MAX_PROCESSES];
   ZERO_ARRAY(worker_iterations);
 
+  /*
+  fprintf(stderr, "slave %d: Waiting for all workers to initialize...\n", sid);
+  pthread_mutex_lock(&ps_ctl->lock);
+  while (!ps_ctl_all_waiting(ps_ctl)) {
+    pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
+  }
+  pthread_mutex_unlock(&ps_ctl->lock);
+  fprintf(stderr, "slave %d: All workers are idle. Continuing\n", sid);
+  */
+
   gettimeofday(tv+0, NULL);
   while (1) {
     pthread_mutex_lock(&ps_ctl->lock);
@@ -203,13 +213,18 @@ slave_main (const char *cmd)
       pthread_mutex_unlock(&ps_ctl->lock);
       break;
     }
+
     // Otherwise, wait for a process to need service
     while (ps_ctl_all_running(ps_ctl)) {
       pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
     }
 
     // Now, service all processes
+    //fprintf(stderr, "slave %d: SERVICING WORKERS\n", sid);
     for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+      //fprintf(stderr, "slave %d: worker %d: state: %d command: %d\n", sid, wid,
+      //        ps_ctl->process_state[wid], ps_ctl->process_cmd[wid]);
+
       switch (ps_ctl->process_state[wid]) {
       case EOD:
         // front buffer empty implies whole queue is empty
@@ -232,12 +247,13 @@ slave_main (const char *cmd)
           ps_ctl->process_cmd[wid] = RUN;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
-	  fprintf(stderr, "slave %d: sent new data to worker %d\n", sid, wid);
+          fprintf(stderr, "slave %d: sent new data to worker %d\n", sid, wid);
 
           // Now advance the iterator
           queue->len -= len;
           queue->count--;
           queue->r_ptr += len;
+
           // Advance to next buffer if needed
           if (queue->count == 0) {
             assert(queue->len == 0);
@@ -251,7 +267,7 @@ slave_main (const char *cmd)
           ps_ctl->process_cmd[wid] = QUIT;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
-        } 
+        }
         break;
 
       case NOSPACE:
@@ -310,10 +326,10 @@ slave_main (const char *cmd)
 
   putchar('\n');
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-    printf(stderr, "Slave %d: Worker %2u iterations: %5u\n", sid, wid, worker_iterations[wid]);
+    fprintf(stderr, "Slave %d: Worker %2u iterations: %5u\n", sid, wid, worker_iterations[wid]);
   }
 
-  printf(stderr, "Time taken: %lfs\n",  ((double)t) / 1000000.0);
+  fprintf(stderr, "Time taken: %lfs\n",  ((double)t) / 1000000.0);
   /*
   printf("Time taken: %lfs (%lfms average)\n",
       ((double)t) / 1000000.0,

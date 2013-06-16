@@ -70,12 +70,12 @@ fork_worker (wid_t wid, const char *exe)
 {
   char env[2][40];
   //char *env_list[3] = {env[0], env[1], NULL};
-  
+
   // Count environment variables
   int nenviron, i;
   for (nenviron=0; environ[nenviron]; ++nenviron) ;
 
-  // Make new list
+  // Make new list FIXME: leak!
   char **env_list = malloc((nenviron + 3) * sizeof(char *));
   for (i=0; i<nenviron; ++i) {
     env_list[i] = environ[i];
@@ -93,7 +93,7 @@ fork_worker (wid_t wid, const char *exe)
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
     // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
-    if (execle(exe, "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", NULL, env_list)) {
+    if (execle(exe, "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
       fprintf(stderr, "Could not exec: %s\n", strerror(errno));
       exit(EXIT_FAILURE);
     }
@@ -161,8 +161,8 @@ process_pool_ctl_init (pid_t hspwrap_pid)
     exit(EXIT_FAILURE);
   }
   pool_ctl = mmap(NULL, sizeof(struct process_pool_ctl), PROT_READ | PROT_WRITE,
-		  MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-		  fd, 0);
+                  MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+                  fd, 0);
 
   if (pool_ctl == MAP_FAILED) {
     fprintf(stderr, "Failed to attach pool SHM. Terminating.\n");
@@ -191,7 +191,7 @@ process_pool_fork ()
   pid_t  tmp_pid, hspwrap_pid, pool_pid;
 
   hspwrap_pid = getpid();
-  
+
   // Create control structure
   pool_ctl = process_pool_ctl_init(hspwrap_pid);
 
@@ -219,8 +219,8 @@ process_pool_fork ()
 
       // Run in a new session / process group
       if (setsid() < 0) {
-	fprintf(stderr, "Couldn't successfully setsid()\n");
-	exit(EXIT_FAILURE);
+        fprintf(stderr, "Couldn't successfully setsid()\n");
+        exit(EXIT_FAILURE);
       }
 
       // Remap outputs (I want this thing to be totally independent)
@@ -229,22 +229,22 @@ process_pool_fork ()
       freopen("/dev/null", "w", stdout);
       freopen("/dev/null", "w", stderr);
       */
-      
+
       // Let main procces know we are ready, and wait for signal to spawn
       pthread_mutex_lock(&pool_ctl->lock);
       pool_ctl->ready = 1;
       pthread_cond_signal(&pool_ctl->wait);
       while (pool_ctl->nprocesses == 0) {
-	pthread_cond_wait(&pool_ctl->run, &pool_ctl->lock);
+        pthread_cond_wait(&pool_ctl->run, &pool_ctl->lock);
       }
       pthread_mutex_unlock(&pool_ctl->lock);
 
       // Start child processes
       if (pool_ctl->nprocesses > 0) {
-	fprintf(stderr, "Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
-	process_pool_start(hspwrap_pid, pool_ctl->workdir, pool_ctl->nprocesses);
+        fprintf(stderr, "Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
+        process_pool_start(hspwrap_pid, pool_ctl->workdir, pool_ctl->nprocesses);
       } else {
-	fprintf(stderr, "Killing process pool...\n");
+        fprintf(stderr, "Killing process pool...\n");
       }
     } else {
       fprintf(stderr, "Could not fork process pool.  Terminating.\n");
@@ -305,7 +305,7 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
     worker_ps[wid].pid = 0;
     worker_ps[wid].status = 0;
   }
-    	  
+
   // Fork all our children
   for (wid = 0, forked = 0; wid < nprocesses; ++wid) {
     if (fork_worker(wid, "exefile")) {
@@ -335,7 +335,7 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
     ps_ctl->process_cmd[wid]   = NO_CMD;
     pthread_cond_signal(&ps_ctl->need_service);
     pthread_mutex_unlock(&ps_ctl->lock);
-    
+
     forked--;
   }
 

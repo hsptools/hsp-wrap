@@ -128,6 +128,18 @@ ps_ctl_all_running (struct process_control *ps_ctl)
   return 1;
 }
 
+int
+ps_ctl_all_waiting (struct process_control *ps_ctl)
+{
+  int i;
+  for (i = 0; i < ps_ctl->nprocesses; ++i) {
+    if (ps_ctl->process_state[i] != EOD) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 
 void
 ps_ctl_print (struct process_control *ps_ctl, FILE *f)

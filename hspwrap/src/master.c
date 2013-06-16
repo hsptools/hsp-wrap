@@ -97,7 +97,7 @@ master_main (int nslaves)
   unsigned     in_cnt;
 
   char *in_s, *in_e;
-    
+
   int max_nseqs, wu_nseqs, slave_idx, seq_idx, rc, i;
   int req_idx, req_type, nreqs;
   int nrunning;
@@ -205,87 +205,86 @@ master_main (int nslaves)
       fprintf(stderr, "master: MPI-Request completed (slave: %d, type: %d flag: %x -> ", slave_idx, req_type, s->sflag);
       switch (req_type) {
       case 0:
-	s->sflag &= ~1;
-	break;
+        s->sflag &= ~1;
+        break;
       case 1:
-	s->sflag &= ~2;
-	break;
+        s->sflag &= ~2;
+        break;
       case 2:
-	s->sflag &= ~4;
-	break;
+        s->sflag &= ~4;
+        break;
       default:
-	// Programming error
-	assert(0);
-	break;
+        // Programming error
+        assert(0);
+        break;
       }
       fprintf(stderr, "%x)\n", s->sflag);
-    
+
     //}
     //
     //for (i=0; i<nslaves; ++i) {
     //  s = &ctx.slaves[i];
       if (!s->sflag) {
-	
-	// Hand out work units
-	// Got a request, service it
-	switch (s->request.type) {
-	case REQ_WORKUNIT:
-	  // Figure out how many WUs to actually send (fair)
-	  wu_nseqs = s->request.count;
-	  if (wu_nseqs > max_nseqs) {
-	    fprintf(stderr, "master: Slave %d requested %d units, limiting to %d.\n",
-		slave_idx, wu_nseqs, max_nseqs); 
-	    wu_nseqs = max_nseqs;
-	  } else {
-	    fprintf(stderr, "master: Slave %d requested %d units.\n", slave_idx, wu_nseqs);
-	  }
+        // Hand out work units
+        // Got a request, service it
+        switch (s->request.type) {
+        case REQ_WORKUNIT:
+          // Figure out how many WUs to actually send (fair)
+          wu_nseqs = s->request.count;
+          if (wu_nseqs > max_nseqs) {
+            fprintf(stderr, "master: Slave %d requested %d units, limiting to %d.\n",
+                slave_idx, wu_nseqs, max_nseqs); 
+            wu_nseqs = max_nseqs;
+          } else {
+            fprintf(stderr, "master: Slave %d requested %d units.\n", slave_idx, wu_nseqs);
+          }
 
-	  // Determine size of all the data we need
-	  for (in_e=in_s, i=wu_nseqs; i; --i) {
-	    in_e = iter_next(in_data, in_data+in_size, in_e);
-	  }
+          // Determine size of all the data we need
+          for (in_e=in_s, i=wu_nseqs; i; --i) {
+            in_e = iter_next(in_data, in_data+in_size, in_e);
+          }
 
-	  // Prepare work unit for data
-	  s->workunit.len    = in_e - in_s;
-	  s->workunit.type   = WU_TYPE_DATA;
-	  s->workunit.blk_id = seq_idx;
-	  s->workunit.count  = wu_nseqs;
-	  // mmap hack again
-	  memcpy(s->wu_data, in_s, s->workunit.len);
+          // Prepare work unit for data
+          s->workunit.len    = in_e - in_s;
+          s->workunit.type   = WU_TYPE_DATA;
+          s->workunit.blk_id = seq_idx;
+          s->workunit.count  = wu_nseqs;
+          // mmap hack again
+          memcpy(s->wu_data, in_s, s->workunit.len);
 
-	  // Advance our iterator
-	  in_s = in_e;
+          // Advance our iterator
+          in_s = in_e;
 
-	  // Send work unit information
-	  rc = MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
-	      TAG_WORKUNIT, MPI_COMM_WORLD);
-	  fprintf(stderr, "master: Slave %d send info: %d\n", slave_idx, rc);
-	  // Send actual data
-	  rc = MPI_Send(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
-	      TAG_DATA, MPI_COMM_WORLD);
-	  fprintf(stderr, "master: Slave %d send data (%d bytes, rank %d): %d\n", slave_idx, s->workunit.len, s->rank, rc);
-	  // Finally, re-post a receive for this rank
-	  rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
-	      TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
-	  outstandings[slave_idx]++;
-	  outstanding++;
-	  fprintf(stderr, "master: Slave %d irecv: %d\n", slave_idx, rc);
+          // Send work unit information
+          rc = MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
+              TAG_WORKUNIT, MPI_COMM_WORLD);
+          fprintf(stderr, "master: Slave %d send info: %d\n", slave_idx, rc);
+          // Send actual data
+          rc = MPI_Send(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
+              TAG_DATA, MPI_COMM_WORLD);
+          fprintf(stderr, "master: Slave %d send data (%d bytes, rank %d): %d\n", slave_idx, s->workunit.len, s->rank, rc);
+          // Finally, re-post a receive for this rank
+          rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
+              TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
+          outstandings[slave_idx]++;
+          outstanding++;
+          fprintf(stderr, "master: Slave %d irecv: %d\n", slave_idx, rc);
 
-	  // Record that we are need to wait for sends and a new request before doing any action
-	  s->sflag = 1;
-	  // Advance the counter
-	  seq_idx += wu_nseqs;
-	  break;
+          // Record that we are need to wait for sends and a new request before doing any action
+          s->sflag = 1;
+          // Advance the counter
+          seq_idx += wu_nseqs;
+          break;
 
-	default:
-	  // Unknown request
-	  fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
-	      s->rank);
-	  exit(EXIT_FAILURE);
-	}
+        default:
+          // Unknown request
+          fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
+              s->rank);
+          exit(EXIT_FAILURE);
+        }
       }
-    //}
-    
+      //}
+
   } // End service loop
 
   fprintf(stderr, "master: Done issuing jobs\n");
@@ -306,7 +305,7 @@ master_main (int nslaves)
 
     outstandings[slave_idx]--;
     outstanding--;
-    
+
     switch (s->request.type) {
     case REQ_WORKUNIT:
       // Kill the slave
@@ -315,14 +314,14 @@ master_main (int nslaves)
       s->workunit.len    = 0;
       s->workunit.blk_id = 0;
       MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
-		TAG_WORKUNIT, MPI_COMM_WORLD);
+               TAG_WORKUNIT, MPI_COMM_WORLD);
       fprintf(stderr, "master: Terminated slave %d.\n", slave_idx);
       break;
 
     default:
       // Unknown request
       fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
-	  s->rank);
+              s->rank);
       exit(EXIT_FAILURE);
     }
   }
