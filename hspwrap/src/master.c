@@ -77,7 +77,7 @@ master_broadcast_file (const char *path)
   chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
 
   // Done broadcasting file, sender will no longer need it (for now)
-  fprintf(stderr, "master: broadcasted file %s with size %zu\n", path, sz);
+  trace("master: broadcasted file %s with size %zu\n", path, sz);
   munmap(file, sz);
   close(fd);
 }
@@ -162,16 +162,15 @@ master_main (int nslaves)
     in_cnt++;
     in_s = in_e;
   }
-  fprintf(stderr, "master: %u inputs\n", in_cnt);
+  info("master: %u inputs\n", in_cnt);
 
   max_nseqs = in_cnt / nslaves;
   wu_nseqs  = 1;
 
+  // FIXME: These Barriers are probably not needed anymore
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "master: past barrier 1\n");
   process_pool_spawn(pool_ctl, ".", -1);
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "master: past barrier 2\n");
   
   // Post a receive work request for each slave
   for (slave_idx=0; slave_idx<nslaves; ++slave_idx) {
@@ -202,7 +201,7 @@ master_main (int nslaves)
       // Wait on our sends to complete if needed
       //wait_sends(&ctx, slave_idx);
 
-      fprintf(stderr, "master: MPI-Request completed (slave: %d, type: %d flag: %x -> ", slave_idx, req_type, s->sflag);
+      trace("master: MPI-Request completed (slave: %d, type: %d flag: %x -> ", slave_idx, req_type, s->sflag);
       switch (req_type) {
       case 0:
         s->sflag &= ~1;
@@ -218,7 +217,7 @@ master_main (int nslaves)
         assert(0);
         break;
       }
-      fprintf(stderr, "%x)\n", s->sflag);
+      trace("%x)\n", s->sflag);
 
     //}
     //
@@ -232,11 +231,11 @@ master_main (int nslaves)
           // Figure out how many WUs to actually send (fair)
           wu_nseqs = s->request.count;
           if (wu_nseqs > max_nseqs) {
-            fprintf(stderr, "master: Slave %d requested %d units, limiting to %d.\n",
+            info("master: Slave %d requested %d units, limiting to %d.\n",
                 slave_idx, wu_nseqs, max_nseqs); 
             wu_nseqs = max_nseqs;
           } else {
-            fprintf(stderr, "master: Slave %d requested %d units.\n", slave_idx, wu_nseqs);
+            trace("master: Slave %d requested %d units.\n", slave_idx, wu_nseqs);
           }
 
           // Determine size of all the data we need
@@ -258,17 +257,15 @@ master_main (int nslaves)
           // Send work unit information
           rc = MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
               TAG_WORKUNIT, MPI_COMM_WORLD);
-          fprintf(stderr, "master: Slave %d send info: %d\n", slave_idx, rc);
           // Send actual data
           rc = MPI_Send(s->wu_data, s->workunit.len, MPI_BYTE, s->rank,
               TAG_DATA, MPI_COMM_WORLD);
-          fprintf(stderr, "master: Slave %d send data (%d bytes, rank %d): %d\n", slave_idx, s->workunit.len, s->rank, rc);
+          trace("master: Slave %d send data (%d bytes, rank %d): %d\n", slave_idx, s->workunit.len, s->rank, rc);
           // Finally, re-post a receive for this rank
           rc = MPI_Irecv(&s->request, sizeof(struct request), MPI_BYTE, s->rank,
               TAG_REQUEST, MPI_COMM_WORLD, &ctx.mpi_req[slave_idx]);
           outstandings[slave_idx]++;
           outstanding++;
-          fprintf(stderr, "master: Slave %d irecv: %d\n", slave_idx, rc);
 
           // Record that we are need to wait for sends and a new request before doing any action
           s->sflag = 1;
@@ -287,15 +284,11 @@ master_main (int nslaves)
 
   } // End service loop
 
-  fprintf(stderr, "master: Done issuing jobs\n");
+  info("master: Done issuing jobs\n");
 
   // Tell all slaves to exit (maybe can be done slave-by-slave)
   for (nrunning=nslaves; nrunning; nrunning--) {
-    fprintf(stderr, "master: Waiting for %d slaves to exit.\n", nrunning);
-    fprintf(stderr, "master: Outstanding: %d\n", outstanding);
-    for (i=0; i<nslaves; ++i) {
-      fprintf(stderr, "master: Slave %d outstanding: %d\n", i, outstandings[i]);
-    }
+    trace(stderr, "master: Waiting for %d slaves to exit.\n", nrunning);
 
     MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
     // Determine the slave and request-type associated with this request
@@ -309,13 +302,13 @@ master_main (int nslaves)
     switch (s->request.type) {
     case REQ_WORKUNIT:
       // Kill the slave
-      fprintf(stderr, "master: Terminating slave %d.\n", slave_idx);
+      trace("master: Terminating slave %d.\n", slave_idx);
       s->workunit.type   = WU_TYPE_EXIT;
       s->workunit.len    = 0;
       s->workunit.blk_id = 0;
       MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
                TAG_WORKUNIT, MPI_COMM_WORLD);
-      fprintf(stderr, "master: Terminated slave %d.\n", slave_idx);
+      trace("master: Terminated slave %d.\n", slave_idx);
       break;
 
     default:
@@ -330,12 +323,12 @@ master_main (int nslaves)
   /*
   fprintf(stderr, "master: Freeing any outstanding requests\n");
   for (i=0; i<nreqs; ++i) {
-    MPI_Request_free(&ctx.mpi_req[i]);
+MPI_Request_free(&ctx.mpi_req[i]);
   }
   */
 
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "master: All jobs complete, proceeding with shutdown\n");
+  info("master: All jobs complete, proceeding with shutdown\n");
   //sleep(5); // FIXME
   MPI_Finalize();
   return 0;

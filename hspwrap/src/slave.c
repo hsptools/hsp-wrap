@@ -50,6 +50,8 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
 {
   int rc, i;
 
+  sid = slave_idx;
+
   // Create output directories
   outdir = getenv("HSP_OUTDIR");
   if (!outdir) {
@@ -60,19 +62,19 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
   i = strlen(outdir) + 15;
   workdir = malloc(i);
   if (!workdir) {
-    fprintf(stderr, "Out of memory.\n");
+    fprintf(stderr, "slave %d: Out of memory.\n", sid);
     exit(EXIT_FAILURE);
   }
 
   snprintf(workdir, i, "%s/%02d/%02d", outdir, slave_idx/100, slave_idx%100);
   if ((rc = mkpath(workdir, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH))) {
-    fprintf(stderr, "Could not create work directory: %s\n", strerror(rc));
+    fprintf(stderr, "slave %d: Could not create work directory: %s\n", sid, strerror(rc));
     exit(EXIT_FAILURE);
   }
 
   // The output directory should exist, now change dir
   if (chdir(workdir)) {
-    fprintf(stderr, "Could not change to work directory: %s\n", strerror(errno));
+    fprintf(stderr, "slave %d: Could not change to work directory: %s\n", sid, strerror(errno));
   }
 
   // Prepare process control structure and streaming SHMs
@@ -82,7 +84,6 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
     ps_ctl_add_file(ps_ctl, i, "inputfile", BUFFER_SIZE);
     ps_ctl_add_file(ps_ctl, i, "outputfile", BUFFER_SIZE);
   }
-  sid = slave_idx;
 }
 
 
@@ -115,30 +116,29 @@ slave_broadcast_work_file(const char *path)
   int     fd;
 
   // Get file size
-  fprintf(stderr, "slave: Receiving work file size...\n");
+  trace("slave: Receiving work file size...\n");
   MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
-  fprintf(stderr, "slave: size: %zu bytes\n", sz);
+  trace("slave: size: %zu bytes\n", sz);
 
   // Create file and size it
   if ((fd = open(path, O_CREAT | O_EXCL | O_RDWR,
                  S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)) == -1) {
-    fprintf(stderr, "%s: Could not create file for writing: %s\n", path, strerror(errno));
+    fprintf(stderr, "slave: %s: Could not create file for writing: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
   if ((ftruncate(fd, sz)) != 0) {
-    fprintf(stderr, "%s: Failed to resize output file: %s\n", path, strerror(errno));
+    fprintf(stderr, "slave: %s: Failed to resize output file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
-  fprintf(stderr, "slave: Created file %s with size: %zu bytes\n", path, sz);
+  trace("slave: Created file %s with size: %zu bytes\n", path, sz);
 
   // mmap
   file = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
   if (file == MAP_FAILED) {
     close(fd);
-    fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
+    fprintf(stderr, "slave: %s: Could not mmap file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
-  fprintf(stderr, "slave: Memory mapped file %s\n", path);
 
   // write data (MPI+mmap work-around)
   chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
@@ -184,12 +184,10 @@ slave_main (const char *cmd)
 
   // Process control is setup, data is in place, start the processes
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "slave %d: past barrier 1\n", sid);
   process_pool_spawn(pool_ctl, workdir, ps_ctl->nprocesses);
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "slave %d: past barrier 2\n", sid);
 
-  fprintf(stderr, "slave %d: Waiting for service requests.\n", sid);
+  info("slave %d: Waiting for service requests.\n", sid);
 
   // Count number of tasks assigned to each worker
   unsigned worker_iterations[MAX_PROCESSES];
@@ -247,7 +245,7 @@ slave_main (const char *cmd)
           ps_ctl->process_cmd[wid] = RUN;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
-          fprintf(stderr, "slave %d: sent new data to worker %d\n", sid, wid);
+          trace("slave %d: sent new data to worker %d\n", sid, wid);
 
           // Now advance the iterator
           queue->len -= len;
@@ -263,7 +261,7 @@ slave_main (const char *cmd)
           }
         } else if (no_work) {
           // No more data, tell it to quit
-          fprintf(stderr, "slave %d: Requesting worker %d to quit\n", sid, wid);
+          trace("slave %d: Requesting worker %d to quit\n", sid, wid);
           ps_ctl->process_cmd[wid] = QUIT;
           ps_ctl->process_state[wid] = RUNNING;
           pthread_cond_signal(&ps_ctl->process_ready[wid]);
@@ -276,7 +274,7 @@ slave_main (const char *cmd)
         // we need to maintain an index so output can be pieced back in
         // proper order by the 'gather' script
         pull_results(&writer, wid);
-        fprintf(stderr, "Buffer almost overflowed, result data is probably interleaved\n");
+        info("slave %d: Buffer almost overflowed, result data is probably interleaved\n", sid);
         ps_ctl->process_cmd[wid] = RUN;
         ps_ctl->process_state[wid] = RUNNING;
         pthread_cond_signal(&ps_ctl->process_ready[wid]);
@@ -319,17 +317,17 @@ slave_main (const char *cmd)
   writer.running = 0;
   pthread_cond_signal(&writer.data_pending);
   pthread_join(writer.thread, NULL);
-  fprintf(stderr, "Writer thread successfully exited\n");
+  info("slave %d: Writer thread successfully exited\n", sid);
 
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
            + (tv[1].tv_usec - tv[0].tv_usec);
 
   putchar('\n');
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-    fprintf(stderr, "Slave %d: Worker %2u iterations: %5u\n", sid, wid, worker_iterations[wid]);
+    info("slave %d: worker %2u: iterations: %5u\n", sid, wid, worker_iterations[wid]);
   }
 
-  fprintf(stderr, "Time taken: %lfs\n",  ((double)t) / 1000000.0);
+  info("slave %d: Time taken: %lfs\n", sid, ((double)t) / 1000000.0);
   /*
   printf("Time taken: %lfs (%lfms average)\n",
       ((double)t) / 1000000.0,
@@ -395,19 +393,19 @@ request_work (struct cache_buffer **queue)
   req.type  = REQ_WORKUNIT;
   req.count = ps_ctl->nprocesses - cnt;
 
-  fprintf(stderr,"slave %d: requesting work...\n", sid);
+  trace("slave %d: requesting work...\n", sid);
   rc = MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
            TAG_REQUEST, MPI_COMM_WORLD);
-  fprintf(stderr,"slave %d: sent request %d\n", sid, rc);
+  trace("slave %d: sent request %d\n", sid, rc);
 
   // Read work unit information
-  fprintf(stderr,"slave %d: receiving work unit...\n", sid);
+  trace("slave %d: receiving work unit...\n", sid);
   rc = MPI_Recv(&wu, sizeof(struct workunit), MPI_BYTE, 0,
            TAG_WORKUNIT, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
 
   //fprintf(stderr,"slave %d: waiting for response...\n", sid);
   //MPI_Waitall(2, mpi_req, MPI_STATUSES_IGNORE);
-  fprintf(stderr,"slave %d: received work unit (type: %d, size: %d) %d\n", sid, wu.type, wu.len, rc);
+  trace("slave %d: received work unit (type: %d, size: %d) %d\n", sid, wu.type, wu.len, rc);
 
   // Figure out what to do with the response
   switch (wu.type) {
@@ -422,10 +420,10 @@ request_work (struct cache_buffer **queue)
     b->count = wu.count;
     b->len   = wu.len;
     b->next  = NULL;
-    fprintf(stderr,"slave %d: receiving work unit data...\n", sid);
+    trace("slave %d: receiving work unit data...\n", sid);
     rc = MPI_Recv(b->data, wu.len, MPI_BYTE, 0,
              TAG_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    fprintf(stderr,"slave %d: received work unit data %d\n", sid, rc);
+    trace("slave %d: received work unit data %d\n", sid, rc);
     // malloc'd structure is freed once queue page is exhausted
 
     // Add to end of queue

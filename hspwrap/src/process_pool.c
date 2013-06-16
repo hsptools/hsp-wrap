@@ -20,6 +20,7 @@
 
 #include <hsp/process_control.h>
 #include "process_pool.h"
+#include "hspwrap.h"
 
 // TODO: Move to util lib
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
@@ -241,10 +242,10 @@ process_pool_fork ()
 
       // Start child processes
       if (pool_ctl->nprocesses > 0) {
-        fprintf(stderr, "Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
+        info("Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
         process_pool_start(hspwrap_pid, pool_ctl->workdir, pool_ctl->nprocesses);
       } else {
-        fprintf(stderr, "Killing process pool...\n");
+        info("Killing process pool...\n");
       }
     } else {
       fprintf(stderr, "Could not fork process pool.  Terminating.\n");
@@ -320,13 +321,12 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
   while (forked) {
     exit_pid = wait(&status);
     wid = worker_for_pid(exit_pid);
-    fprintf(stderr, "Worker %d (pid %d) exited", wid, exit_pid);
     if (WIFEXITED(status)) {
-      fprintf(stderr, " with status %d\n", WEXITSTATUS(status));
+      trace("Worker %d (pid %d) exited with status %d\n",
+	    wid, exit_pid, WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
-      fprintf(stderr, " with signal %d\n", WTERMSIG(status));
-    } else {
-      fputc('\n', stderr);
+      trace("Worker %d (pid %d) exited with signal %d\n",
+	    wid, exit_pid, WTERMSIG(status));
     }
 
     // Update state to "DONE"
@@ -339,7 +339,7 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
     forked--;
   }
 
-  fprintf(stderr, "Process pool pid %d under wrapper pid %d is exiting...\n",
+  trace("Process pool pid %d under wrapper pid %d is exiting...\n",
       getpid(), wrapper_pid);
 
   /*

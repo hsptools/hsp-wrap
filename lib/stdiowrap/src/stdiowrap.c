@@ -24,6 +24,9 @@
 //#define trace_fn(fmt, ...) fprintf(stderr, "worker %d: %s(" fmt ")\n", wid, __func__, __VA_ARGS__)
 #define trace_fn(fmt, ...) 
 
+//#define trace(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
+#define trace(fmt, ...) 
+
 ////////////////////////////////////////////////////////////////////////////////
 // Internal State
 ////////////////////////////////////////////////////////////////////////////////
@@ -395,12 +398,12 @@ wait_eod (struct WFILE *wf)
 
   // Not a stream, don't even try!
   if (!wf->is_stream) {
-    fprintf(stderr, "stdiowrap: worker %d (pid: %d): EOD, not a stream. Claiming EOF.\n", wid, getpid());
+    trace("stdiowrap: worker %d (pid: %d): EOD, not a stream. Claiming EOF.\n", wid, getpid());
     return 0;
   }
 
   // Request service
-  fprintf(stderr, "stdiowrap: worker %d (pid: %d): EOD, requesting service...\n", wid, getpid());
+  trace("stdiowrap: worker %d (pid: %d): EOD, requesting service...\n", wid, getpid());
   pthread_mutex_lock(&ps_ctl->lock);
   set_status(EOD);
   pthread_cond_signal(&ps_ctl->need_service);
@@ -412,7 +415,7 @@ wait_eod (struct WFILE *wf)
   cmd = get_command();
   switch (cmd) {
   case RUN:
-    fprintf(stderr, "stdiowrap: worker %d (pid: %d): RUN, got more data.\n", wid, getpid());
+    trace("stdiowrap: worker %d (pid: %d): RUN, got more data.\n", wid, getpid());
     // More data, update WFILE and continue
     wf->offset += wf->size;
     wf->size    = *wf->psize;
@@ -424,7 +427,7 @@ wait_eod (struct WFILE *wf)
     break;
 
   case QUIT:
-    fprintf(stderr, "stdiowrap: worker %d (pid: %d): QUIT, no more data. Claiming EOF.\n", wid, getpid());
+    trace("stdiowrap: worker %d (pid: %d): QUIT, no more data. Claiming EOF.\n", wid, getpid());
     ret = 0;
     break;
 
