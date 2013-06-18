@@ -36,6 +36,10 @@ struct worker_process {
 static wid_t  worker_for_pid (pid_t pid);
 static int    fork_worker (wid_t wid, const char *exe);
 static struct process_pool_ctl *process_pool_ctl_init (pid_t hspwrap_pid);
+static void *create_shm_posix (const char *name, long shmsz, int *fd);
+static void *create_shm_sysv (int offset, long shmsz, int *fd);
+static void *mmap_shm_posix (const char *name, size_t sz, int *fd);
+static void *mmap_shm_sysv (key_t key, size_t sz, int *id);
 
 //// State
 
@@ -94,7 +98,7 @@ fork_worker (wid_t wid, const char *exe)
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
     // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
-    if (execle(exe, "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
+    if (execle(exe, "blastall", "-p", "blastp", "-d", "nr", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
       fprintf(stderr, "Could not exec: %s\n", strerror(errno));
       exit(EXIT_FAILURE);
     }
@@ -149,28 +153,12 @@ process_pool_ctl_init (pid_t hspwrap_pid)
   }
 
   // Create SHM and mmap it
+#ifdef HSP_SYSV_SHM
+  pool_ctl = create_shm_sysv(hspwrap_pid + 1, sizeof(struct process_pool_ctl), &fd); 
+#else
   snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, POOL_CTL_SHM_NAME);
-  fd = shm_open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-  if (fd < 0) {
-    fprintf(stderr, "Failed to make pool SHM: %s\n",strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-  if ((ftruncate(fd, sizeof(struct process_pool_ctl))) != 0) {
-    fprintf(stderr, "Failed to resize pool SHM: %s\n",strerror(errno));
-    close(fd);
-    shm_unlink(shmname);
-    exit(EXIT_FAILURE);
-  }
-  pool_ctl = mmap(NULL, sizeof(struct process_pool_ctl), PROT_READ | PROT_WRITE,
-                  MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-                  fd, 0);
-
-  if (pool_ctl == MAP_FAILED) {
-    fprintf(stderr, "Failed to attach pool SHM. Terminating.\n");
-    close(fd);
-    shm_unlink(shmname);
-    exit(EXIT_FAILURE);
-  }
+  pool_ctl = create_shm_posix(shmname, sizeof(struct process_pool_ctl), &fd); 
+#endif
 
   // Initialize structure
   pool_ctl->nprocesses = 0;
@@ -283,22 +271,13 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
   nprocesses  = nproc;
 
   // Attach ps_ctl TODO: Refactor (we use this here and in stdiowrap)
-  {
-    char shmname[256];
-    int fd;
-    snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
-    fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-
-    struct stat st;
-    fstat(fd, &st);
-    ps_ctl = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, 
-                  MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-                  fd, 0);
-    if (ps_ctl == MAP_FAILED) {
-      fprintf(stderr,"process_pool: Failed to attach index SHM (%s): %s\n", shmname, strerror(errno));
-      exit(1);
-    }
-  }
+#ifdef HSP_SYSV_SHM
+  ps_ctl = mmap_shm_sysv(hspwrap_pid + 0, sizeof(struct process_control), NULL);
+#else
+  char shmname[256];
+  snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
+  ps_ctl = mmap_shm_posix(shmname, sizeof(struct process_control), NULL);
+#endif
 
   // Initialize worker-process data
   for (wid = 0; wid < nprocesses; ++wid) {
@@ -366,3 +345,132 @@ process_pool_spawn (struct process_pool_ctl *pool_ctl, const char *workdir, int 
   pthread_cond_signal(&pool_ctl->run);
 }
 
+
+static void *
+mmap_shm_posix (const char *name, size_t sz, int *fd)
+{
+  void *shm;
+  int shmfd;
+
+  shmfd = shm_open(name, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+  if (shmfd == -1) {
+    fprintf(stderr, "stdiowrap: Failed to open SHM (%s): %s\n", name, strerror(errno));
+    exit(1);
+  }
+
+  // Attach the SHM
+  shm = mmap(NULL, sz, PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
+
+  if (shm == MAP_FAILED) {
+    fprintf(stderr, "stdiowrap: Failed to map SHM (%s): %s\n", name, strerror(errno));
+    exit(1);
+  }
+
+  if (fd) {
+    *fd = shmfd;
+  }
+  return shm;
+}
+
+
+static void *
+mmap_shm_sysv (key_t key, size_t sz, int *id)
+{
+  void *shm;
+  int shmid;
+
+  // Our parent already marked the SHMs for removal, so they will
+  // cleaned up for us later.
+  fprintf(stderr, "mmap_shm getting shm %d ...\n", key);
+  shmid = shmget(key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
+  if (shmid == -1) {
+    fprintf(stderr, "stdiowrap: Fail to get SHM with key %d: %s\n",
+            key, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  // Attach the SHM
+  fprintf(stderr, "mmap_shm attaching shm %d ...\n", key);
+  shm = shmat(shmid, NULL, 0);
+  if (shm == ((void *) -1)) {
+    fprintf(stderr, "stdiowrap: Failed to attach SHM with key %d: %s\n",
+            key, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  fprintf(stderr, "mmap_shm done %d \n", key);
+  if (id) {
+    *id = shmid;
+  }
+  return shm;
+}
+
+
+static void *
+create_shm_posix (const char *name, long shmsz, int *fd)
+{
+  void *shm;
+  int   shmfd;
+
+  shmfd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+  if (shmfd < 0) {
+    fprintf(stderr, "Failed to make pool SHM: %s\n",strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  if ((ftruncate(shmfd, shmsz)) != 0) {
+    fprintf(stderr, "Failed to resize pool SHM: %s\n",strerror(errno));
+    close(shmfd);
+    shm_unlink(name);
+    exit(EXIT_FAILURE);
+  }
+  shm = mmap(NULL, sizeof(struct process_pool_ctl), PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
+
+  if (shm == MAP_FAILED) {
+    fprintf(stderr, "Failed to attach pool SHM. Terminating.\n");
+    close(shmfd);
+    shm_unlink(name);
+    exit(EXIT_FAILURE);
+  }
+
+  if (fd) {
+    *fd = shmfd;
+  }
+  return shm;
+}
+
+
+static void *
+create_shm_sysv (key_t id, long shmsz, int *fd)
+{
+  void *shm;
+  int   shmfd;
+      
+  // Create the shared memory segment, and then mark for removal.
+  // As soon as all attachments are gone, the segment will be
+  // destroyed by the OS.
+  fprintf(stderr, "create_shm getting shm %d ...\n", id);
+  shmfd = shmget(id, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  if (shmfd < 0) {
+    fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n", shmsz, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  fprintf(stderr, "create_shm attaching shm %d ...\n", id);
+  shm = shmat(shmfd, NULL, 0);
+  fprintf(stderr, "create_shm controlling shm %d ...\n", id);
+  shmctl(shmfd, IPC_RMID, NULL);
+  if (shm == ((void*)-1)) {
+    fprintf(stderr, "Failed to attach SHM. Terminating.\n");
+    exit(EXIT_FAILURE);
+  }
+
+  fprintf(stderr, "create_shm %d done\n", id);
+  // Return the created SHM
+  if (fd) {
+    *fd = shmfd;
+  }
+  return shm;
+}

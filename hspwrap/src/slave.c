@@ -33,7 +33,6 @@ struct cache_buffer
 };
 
 static int  mkpath (const char *path, mode_t mode);
-static void fork_process_pool (const char *cmd);
 static int  request_work (struct cache_buffer **queue);
 static void push_work (wid_t wid, const char *data, size_t len);
 static void pull_results (struct writer_ctx *w, wid_t wid);

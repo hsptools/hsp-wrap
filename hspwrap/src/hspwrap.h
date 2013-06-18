@@ -5,7 +5,7 @@
 #include <mpi.h>
 
 // Configuration
-#define NUM_PROCS 16
+#define NUM_PROCS 12
 #define BUFFER_SIZE (4L<<20)
 #define BCAST_CHUNK_SIZE (4L<<20)
 
@@ -24,8 +24,8 @@
 // Tag for slave messages
 #define TAG_REQUEST 3
 
-//#define trace(...) fprintf(stderr, __VA_ARGS__)
-#define trace(...) 
+#define trace(...) fprintf(stderr, __VA_ARGS__)
+//#define trace(...) 
 
 #define info(...) fprintf(stderr, __VA_ARGS__)
 //#define info(fmt, ...) 

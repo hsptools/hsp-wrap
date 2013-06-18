@@ -52,6 +52,9 @@ static const int fd_check_mask  = ~(((unsigned)-1)>>2);
 static int fd_next              = 10;
 static struct WFILEDES *fd_list = NULL;
 
+static void *mmap_shm_posix (const char *name, size_t sz, int *fd);
+static void *mmap_shm_sysv (key_t key, size_t sz, int *id);
+
 ////////////////////////////////////////////////////////////////////////////////
 // SHM-specific routines
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,46 +78,18 @@ parse_env (void *dest, char *name, const char *format)
 static void
 init_SHM ()
 {
-  int   fd;
-
   if (!ps_ctl) {
-    char  shmname[256];
-
     parse_env(&hspwrap_pid, PID_ENVVAR, "%d");
     parse_env(&wid, WORKER_ID_ENVVAR, "%" SCN_WID);
 
+#ifdef HSP_SYSV_SHM
+    ps_ctl = mmap_shm_sysv(hspwrap_pid + 0, sizeof(struct process_control), NULL);
+#else
+    char  shmname[256];
     snprintf(shmname, 256, "/hspwrap.%d.%s", hspwrap_pid, PS_CTL_SHM_NAME);
-    fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-    if (fd == -1) {
-      fprintf(stderr, "stdiowrap: Failed to open process control SHM (%s): %s\n", shmname, strerror(errno));
-      exit(1);
-    }
-    
-    // The file descriptors for the SHMs will already be available to
-    // the current process, as it is the child of the process that
-    // created the SHMs.  We only need to open the SHM.  Note that
-    // our parent already marked the SHMs for removal, so they will
-    // cleaned up for us later.
-    /*
-
-    // Attach the SHM
-    ps_ctl = shmat(fd, NULL, 0);
-    if (ps_ctl == ((void *) -1)) {
-      fprintf(stderr, "stdiowrap: Failed to attach index SHM.\n");
-    }
-    */
-
-    // Attach the SHM
-    struct stat st;
-    fstat(fd, &st);
-    ps_ctl = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, 
-                      MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-                      fd, 0);
-    if (ps_ctl == MAP_FAILED) {
-      fprintf(stderr, "stdiowrap: Failed to map process control SHM (%s): %s\n", shmname, strerror(errno));
-      exit(1);
-    }
+    ps_ctl = mmap_shm_posix(shmname, sizeof(struct process_control), NULL);
     //shm_unlink(shmname);
+#endif
   }
 }
 
@@ -152,28 +127,21 @@ fill_WFILE_data_SHM (struct WFILE *wf)
 
   f = find_file_entry(wf->name, &idx);
   if (f) {
-    char  shmname[256];
-
     //fprintf(stderr, "stdiowrap: virtualize file %d %s %s %d %d\n", idx, f->name, wf->name, f->wid, wid);
 
-    snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, idx);
-    int fd = shm_open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-    
     // Attach the shared memory segment
-    wf->data = mmap(NULL, f->shm_size, PROT_READ | PROT_WRITE, 
-		    MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
-		    fd, 0);
-    if (wf->data == MAP_FAILED) {
-      fprintf(stderr, "stdiowrap: Failed to attach SHM.\n");
-      fflush(stderr);
-	    exit(1);
-    }
+#ifdef HSP_SYSV_SHM
+    wf->data = mmap_shm_sysv(hspwrap_pid + 2 + idx, f->shm_size, NULL);
+#else
+    char  shmname[256];
+    snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, idx);
+    wf->data = mmap_shm_posix(shmname, f->shm_size, NULL);
+    //shm_unlink(shmname);
+#endif
     wf->size  = f->size;
     wf->tsize = f->shm_size;
     wf->psize = &(f->size);
     wf->is_stream = (f->wid != -1);
-
-    //shm_unlink(shmname);
 
     // We are done; return
     return 0;
@@ -491,6 +459,65 @@ wait_nospace (struct WFILE *wf)
 
   pthread_mutex_unlock(&ps_ctl->lock);
   return ret;
+}
+
+
+static void *
+mmap_shm_posix (const char *name, size_t sz, int *fd)
+{
+  void *shm;
+  int shmfd;
+
+  shmfd = shm_open(name, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+  if (shmfd == -1) {
+    fprintf(stderr, "stdiowrap: Failed to open SHM (%s): %s\n", name, strerror(errno));
+    exit(1);
+  }
+
+  // Attach the SHM
+  shm = mmap(NULL, sz, PROT_READ | PROT_WRITE,
+             MAP_SHARED /*| MAP_LOCKED | MAP_HUGETLB*/,
+             shmfd, 0);
+
+  if (shm == MAP_FAILED) {
+    fprintf(stderr, "stdiowrap: Failed to map SHM (%s): %s\n", name, strerror(errno));
+    exit(1);
+  }
+
+  if (fd) {
+    *fd = shmfd;
+  }
+  return shm;
+}
+
+
+static void *
+mmap_shm_sysv (key_t key, size_t sz, int *id)
+{
+  void *shm;
+  int shmid;
+
+  // Our parent already marked the SHMs for removal, so they will
+  // cleaned up for us later.
+  shmid = shmget(key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
+  if (shmid == -1) {
+    fprintf(stderr, "stdiowrap: Fail to get SHM with key %d: %s\n",
+            key, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  // Attach the SHM
+  shm = shmat(shmid, NULL, 0);
+  if (shm == ((void *) -1)) {
+    fprintf(stderr, "stdiowrap: Failed to attach SHM with key %d: %s\n",
+            key, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  if (id) {
+    *id = shmid;
+  }
+  return shm;
 }
 
 
@@ -1167,20 +1194,14 @@ stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
 
   // mmap if not already mapped
   if (wfd->ref_cnt == 0) {
+#ifdef HSP_SYSV_SHM
+    wfd->data = mmap_shm_sysv(hspwrap_pid + 2 + wfd->fte_idx, fte->shm_size, NULL);
+#else
     char shmname[256];
-    int  shmfd;
     snprintf(shmname, 256, "/hspwrap.%d.%d", hspwrap_pid, wfd->fte_idx);
-    shmfd = shm_open(shmname, O_RDONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-    if (shmfd == -1) {
-      fprintf(stderr, "stdiowrap: mmap failed: couldn't open SHM: %s\n", shmname);
-      return MAP_FAILED;
-    }
-    wfd->data = mmap(NULL, fte->shm_size, PROT_READ, MAP_SHARED, shmfd, 0);
-    if (wfd->data == MAP_FAILED) {
-      fprintf(stderr, "stdiowrap: mmap failed: couldn't mmap SHM: %s\n", shmname);
-      return MAP_FAILED;
-    }
+    wfd->data = mmap_shm_posix(shmname, fte->shm_size, NULL);
     //shm_unlink(shmname);
+#endif
   }
 
   wfd->ref_cnt++;

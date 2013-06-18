@@ -11,7 +11,8 @@
 
 #include "hsp/process_control.h"
 
-static void *create_shm (const char *name, long shmsz, int *fd);
+static void *create_shm_posix (const char *name, long shmsz, int *fd);
+static void *create_shm_sysv (int offset, long shmsz, int *fd);
 
 struct process_control *
 ps_ctl_init (unsigned nprocesses, int *ps_ctl_fd)
@@ -42,7 +43,11 @@ ps_ctl_init (unsigned nprocesses, int *ps_ctl_fd)
   }
 
   // Create main "process control" structure
-  ps_ctl = create_shm(PS_CTL_SHM_NAME, sizeof(struct process_control), &fd);
+#ifdef HSP_SYSV_SHM
+  ps_ctl = create_shm_sysv(0, sizeof(struct process_control), &fd);
+#else
+  ps_ctl = create_shm_posix(PS_CTL_SHM_NAME, sizeof(struct process_control), &fd);
+#endif
 
   // Process control data
   ps_ctl->nprocesses = nprocesses;
@@ -81,11 +86,15 @@ ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid, const char *name, si
 {
     void *shm;
     int   fd, j;
-    char  shmname[8];
 
     j = ps_ctl->ft.nfiles;
+#ifdef HSP_SYSV_SHM
+    shm = create_shm_sysv(2 + j, sz, &fd);
+#else
+    char  shmname[8];
     snprintf(shmname, sizeof(shmname), "%d", j);
-    shm = create_shm(shmname, sz, &fd);
+    shm = create_shm_posix(shmname, sz, &fd);
+#endif
     if (j < MAX_DB_FILES) {
       ps_ctl->ft.file[j].shm      = shm;
       ps_ctl->ft.file[j].shm_fd   = fd;
@@ -159,7 +168,7 @@ ps_ctl_print (struct process_control *ps_ctl, FILE *f)
  * Create a shared memory segment and map it into virtual memory.
  */
 static void *
-create_shm (const char *name, long shmsz, int *fd)
+create_shm_posix (const char *name, long shmsz, int *fd)
 {
   void *shm;
   int   shmfd;
@@ -196,5 +205,37 @@ create_shm (const char *name, long shmsz, int *fd)
 }
 
 
+static void *
+create_shm_sysv (int offset, long shmsz, int *fd)
+{
+  void *shm;
+  int   shmfd;
+  key_t id;
 
+  id = getpid() + offset;
+      
+  // Create the shared memory segment, and then mark for removal.
+  // As soon as all attachments are gone, the segment will be
+  // destroyed by the OS.
+  fprintf(stderr, "Create_shm getting shm %d ...\n", id);
+  shmfd = shmget(id, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  if (shmfd < 0) {
+    fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n", shmsz, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  fprintf(stderr, "Create_shm attaching shm %d ...\n", id);
+  shm = shmat(shmfd, NULL, 0);
+  fprintf(stderr, "Create_shm controlling shm %d ...\n", id);
+  shmctl(shmfd, IPC_RMID, NULL);
+  if (shm == ((void*)-1)) {
+    fprintf(stderr, "Failed to attach SHM. Terminating.\n");
+    exit(EXIT_FAILURE);
+  }
 
+  fprintf(stderr, "Create_shm %d done\n", id);
+  // Return the created SHM
+  if (fd) {
+    *fd = shmfd;
+  }
+  return shm;
+}

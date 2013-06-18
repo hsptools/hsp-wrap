@@ -288,7 +288,7 @@ master_main (int nslaves)
 
   // Tell all slaves to exit (maybe can be done slave-by-slave)
   for (nrunning=nslaves; nrunning; nrunning--) {
-    trace(stderr, "master: Waiting for %d slaves to exit.\n", nrunning);
+    trace("master: Waiting for %d slaves to exit.\n", nrunning);
 
     MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
     // Determine the slave and request-type associated with this request
