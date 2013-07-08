@@ -40,7 +40,7 @@ def configure(conf):
     conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall', '-g', '-ggdb', '-O0']) #, '-Werror'])
 
     # Hack
-    conf.env.DEFINES += ['HSP_SYSV_SHM=1']
+    #conf.env.DEFINES += ['HSP_SYSV_SHM=1']
 
     # Locate any programs needed for the configuration process
     mysql_config = conf.find_program('mysql_config', var='MYSQL_CONFIG', mandatory=False)

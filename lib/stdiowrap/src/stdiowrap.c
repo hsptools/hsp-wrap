@@ -468,7 +468,13 @@ mmap_shm_posix (const char *name, size_t sz, int *fd)
   void *shm;
   int shmfd;
 
+#ifdef HSP_TMP_SHM
+  char shmname[256];
+  sprintf(shmname, "/tmp%s", name);
+  shmfd = open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#else
   shmfd = shm_open(name, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#endif
   if (shmfd == -1) {
     fprintf(stderr, "stdiowrap: Failed to open SHM (%s): %s\n", name, strerror(errno));
     exit(1);
@@ -499,7 +505,7 @@ mmap_shm_sysv (key_t key, size_t sz, int *id)
 
   // Our parent already marked the SHMs for removal, so they will
   // cleaned up for us later.
-  shmid = shmget(key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
+  shmid = shmget(1337+key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
   if (shmid == -1) {
     fprintf(stderr, "stdiowrap: Fail to get SHM with key %d: %s\n",
             key, strerror(errno));
@@ -631,7 +637,7 @@ stdiowrap_fgets (char *s, int size, FILE *stream)
   // Copy from wf until newline, EOF, or size limit
   while (--size) {
     // End of buffer, fetch more
-    if (wf->pos == (wf->data + wf->size)) {
+    if (wf->pos >= (wf->data + wf->size)) {
       if (!wait_eod(wf)) {
 	break;
       }

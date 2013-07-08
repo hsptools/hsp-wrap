@@ -7,8 +7,6 @@
 // Configuration
 #define NUM_PROCS 12
 #define BUFFER_SIZE (4L<<20)
-#define BCAST_CHUNK_SIZE (4L<<20)
-
 
 // Common utils
 #define MIN(a, b) (((a)<(b))?(a):(b))
@@ -59,6 +57,6 @@ struct request {
 };
 
 char *iter_next (char *s, char *e, char *i);
-int   chunked_bcast (void *buffer, int count, int root, MPI_Comm comm);
+int   chunked_bcast (void *buffer, size_t count, int root, MPI_Comm comm);
 
 #endif // HSPWRAP_H__

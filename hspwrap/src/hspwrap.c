@@ -1,7 +1,9 @@
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <mpi.h>
@@ -11,7 +13,77 @@
 #include "master.h"
 #include "slave.h"
 
+//#define TIMING_MODE 1
+
+// TODO: Move this timing code:
+struct timing
+{
+  struct timespec db_start;
+  struct timespec db_end;
+  uintmax_t       db_kbytes;
+};
+
+double 
+timeval_subtract (struct timespec *t1, struct timespec *t0)
+{
+  struct timespec rv;
+  long sec;
+
+  // Perform the carry for the later subtraction by updating t0. */
+  if (t1->tv_nsec < t0->tv_nsec) {
+    sec = (t0->tv_nsec - t1->tv_nsec) / 1000000000 + 1;
+    t0->tv_nsec -= 1000000000 * sec;
+    t0->tv_sec  += sec;
+  }
+  if (t1->tv_nsec - t0->tv_nsec > 1000000000) {
+    sec = (t1->tv_nsec - t0->tv_nsec) / 1000000000;
+    t0->tv_nsec += 1000000000 * sec;
+    t0->tv_nsec -= sec;
+  }
+
+
+  // Compute the difference
+  rv.tv_sec = t1->tv_sec - t0->tv_sec;
+  rv.tv_nsec = t1->tv_nsec - t0->tv_nsec;
+
+  return ((double)rv.tv_sec) + (rv.tv_nsec / 1000000000.0f);
+}
+
+void
+timing_init(struct timing *t)
+{
+  memset(t, sizeof(struct timing), 0);
+}
+
+void
+timing_record(struct timespec *ts)
+{
+  clock_gettime(CLOCK_MONOTONIC, ts);
+}
+
+void
+timing_print(struct timing *t)
+{
+  double s;
+  fputs("Timing Information:\n", stderr);
+
+  s = timeval_subtract(&t->db_end, &t->db_start);
+  fprintf(stderr, "  Database Broadcast: %8.2lf s (%.2lf KB/s)\n",
+          s, ((double)t->db_kbytes)/s);
+
+  fprintf(stderr, "%lld.%.9ld, %lld.%.9ld\n",
+      (long long)t->db_start.tv_sec, t->db_start.tv_nsec,
+      (long long)t->db_end.tv_sec, t->db_end.tv_nsec);
+}
+
+////
+
 struct process_pool_ctl *pool_ctl;
+struct timing timing;
+
+// TODO: Remove me
+size_t bcast_chunk_size;
+char   input_fmt;
 
 void
 print_banner (FILE *f)
@@ -38,6 +110,7 @@ print_banner_slant (FILE *f)
 int
 main (int argc, char **argv)
 {
+  char *ch;
 
   if (argc != 2) {
     fputs("Invalid number of arguments\n", stderr);
@@ -45,8 +118,30 @@ main (int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
+  ch = getenv("HSP_BCAST_CHUNK_SIZE");
+  if (ch) {
+    sscanf(ch, "%zu", &bcast_chunk_size);
+  } else {
+    bcast_chunk_size = 4L << 20;
+  }
+
+  ch = getenv("HSP_INPUT_FORMAT");
+  if (!ch || ch[0] == '\0' || ch[0] == 'l') {
+    input_fmt = 'l';
+  } else if (ch[0] == 'f') {
+    input_fmt = 'f';
+  } else {
+    fputs("Invalid input format specified\n", stderr);
+    exit(EXIT_FAILURE);
+  }
+
   // Pre-fork process pool (even on master)
+#ifndef TIMING_MODE
+  sleep(1);
   pool_ctl = process_pool_fork();
+  info("Process pool created.\n");
+  sleep(1);
+#endif
 
   // Initialize MPI
   int rank, ranks;
@@ -54,11 +149,14 @@ main (int argc, char **argv)
     fprintf(stderr, "Error initialize MPI.\n");
     return EXIT_FAILURE;
   }
+  info("MPI Initialized.\n");
 
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+  info("MPI Stats aquired.\n");
 
   // Initialize our state
+  timing_init(&timing);
   if (rank) {
     slave_init(rank, ranks-1, NUM_PROCS);
   } else {
@@ -74,7 +172,11 @@ main (int argc, char **argv)
   }
 
   // Distribute DB files
+  fprintf(stderr, "At barrier...\n");
   MPI_Barrier(MPI_COMM_WORLD);
+  fprintf(stderr, "Past barrier.\n");
+  timing_record(&timing.db_start);
+
   char *dbdir   = getenv("HSP_DBDIR");
   char *dbfiles = strdup(getenv("HSP_DBFILES"));
   char *fn, path[PATH_MAX];
@@ -83,12 +185,23 @@ main (int argc, char **argv)
     snprintf(path, sizeof(path), "%s/%s", dbdir, fn);    
 
     if (rank) {
-      slave_broadcast_shared_file(path);
+      timing.db_kbytes += slave_broadcast_shared_file(path)/1024;
     } else {
-      master_broadcast_file(path);
+      timing.db_kbytes += master_broadcast_file(path)/1024;
     }
   }
   free(dbfiles);
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  timing_record(&timing.db_end);
+
+#ifdef TIMING_MODE
+  if (!rank) {
+    timing_print(&timing);
+  }
+  MPI_Finalize();
+  return 0;
+#endif
 
   // FIXME: The order of things is generally wrong. Should be:
   // Fork Forker, MPI_Init, PS Ctl, EXE/DB distro, forking, main loop
@@ -110,12 +223,11 @@ main (int argc, char **argv)
   }
 #endif
 
-  MPI_Barrier(MPI_COMM_WORLD);
-
   if (rank) {
     slave_main(argv[1]);
   } else {
     master_main(ranks-1);
+    timing_print(&timing);
   }
 
   return 0;
@@ -155,10 +267,18 @@ iter_fasta_next (char *s, char *e, char *i)
 char *
 iter_next (char *s, char *e, char *i)
 {
-  return iter_fasta_next(s, e, i);
+  switch (input_fmt) {
+    case 'f':
+      return iter_fasta_next(s, e, i);
+    case 'l':
+      return iter_line_next(s, e, i);
+    default:
+      return NULL;
+  }
 }
 
-int chunked_bcast (void *buffer, int count, int root, MPI_Comm comm)
+int
+chunked_bcast (void *buffer, size_t count, int root, MPI_Comm comm)
 {
   char   *chunk;
   size_t  off, chunk_sz;
@@ -171,9 +291,12 @@ int chunked_bcast (void *buffer, int count, int root, MPI_Comm comm)
   }
 
   // write data (MPI+mmap work-around)
-  chunk = malloc(MIN(BCAST_CHUNK_SIZE, count));
-  for (off=0; off<count; off+=BCAST_CHUNK_SIZE) {
-    chunk_sz = MIN(BCAST_CHUNK_SIZE, count-off);
+  chunk = malloc(MIN(bcast_chunk_size, count));
+  if (!chunk) {
+    fprintf(stderr, "Couldn't allocate buffer for broadcast: %s", strerror(errno));
+  }
+  for (off=0; off<count; off+=bcast_chunk_size) {
+    chunk_sz = MIN(bcast_chunk_size, count-off);
     // We are root, get chunk ready to send
     if (rank == root) {
       memcpy(chunk, buffer+off, chunk_sz);

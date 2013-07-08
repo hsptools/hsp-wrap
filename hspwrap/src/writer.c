@@ -21,7 +21,7 @@ writer_main (void *arg)
 
   int fd;
   // TODO: Consider O_NONBLOCK or O_SYNC
-  fd = open("output", O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR |S_IRGRP | S_IROTH);
+  fd = open(ctx->name, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR |S_IRGRP | S_IROTH);
   if (fd == -1) {
     fprintf(stderr, "writer: Could not open output file\n");
     exit(EXIT_FAILURE);
@@ -64,9 +64,10 @@ writer_main (void *arg)
 
 
 int
-writer_start (struct writer_ctx *ctx, size_t buff_size)
+writer_start (struct writer_ctx *ctx, const char *name, size_t buff_size)
 {
   // TODO: error checking
+  ctx->name  = name;
   ctx->size  = buff_size;
   ctx->avail = ctx->size;
   ctx->buf   = malloc(ctx->size);

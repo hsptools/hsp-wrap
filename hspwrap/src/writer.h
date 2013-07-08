@@ -2,6 +2,7 @@
 #define WRITER_H__
 
 struct writer_ctx {
+  const char *name;                  // Output file name
   char   *buf;                       // Output buffer
   char   *ptr;                       // Current pointer for writer
   size_t  size;                      // Total size of either buffer
@@ -18,7 +19,7 @@ struct writer_ctx {
   pthread_cond_t  data_pending;      // Signal to writer that there is data
 };
 
-int  writer_start (struct writer_ctx *ctx, size_t buff_size);
+int  writer_start (struct writer_ctx *ctx, const char *name, size_t buff_size);
 void writer_write (struct writer_ctx *ctx, const void *buf, size_t count);
 void wrtier_stop  (struct writer_ctx *ctx);
 

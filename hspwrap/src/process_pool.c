@@ -98,7 +98,8 @@ fork_worker (wid_t wid, const char *exe)
     snprintf(env[1], ARRAY_SIZE(env[1]), WORKER_ID_ENVVAR "=%" PRI_WID "\n", wid);
 
     // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
-    if (execle(exe, "blastall", "-p", "blastp", "-d", "nr", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
+    // if (execle(exe, "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
+    if (execle(exe, "test-db", "output", "fun.txt", "nr-5m/BLOSUM62", "log", NULL, env_list)) {
       fprintf(stderr, "Could not exec: %s\n", strerror(errno));
       exit(EXIT_FAILURE);
     }
@@ -239,6 +240,7 @@ process_pool_fork ()
       fprintf(stderr, "Could not fork process pool.  Terminating.\n");
       exit(EXIT_FAILURE);
     }
+  
     exit(EXIT_SUCCESS);
   } else {
     fprintf(stderr, "Could not fork temporary process.  Terminating.\n");
@@ -352,9 +354,15 @@ mmap_shm_posix (const char *name, size_t sz, int *fd)
   void *shm;
   int shmfd;
 
+#ifdef HSP_TMP_SHM
+  char shmname[256];
+  sprintf(shmname, "/tmp%s", name);
+  shmfd = open(shmname, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#else
   shmfd = shm_open(name, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#endif
   if (shmfd == -1) {
-    fprintf(stderr, "stdiowrap: Failed to open SHM (%s): %s\n", name, strerror(errno));
+    fprintf(stderr, "pool: Failed to open SHM (%s): %s\n", name, strerror(errno));
     exit(1);
   }
 
@@ -364,7 +372,7 @@ mmap_shm_posix (const char *name, size_t sz, int *fd)
              shmfd, 0);
 
   if (shm == MAP_FAILED) {
-    fprintf(stderr, "stdiowrap: Failed to map SHM (%s): %s\n", name, strerror(errno));
+    fprintf(stderr, "pool: Failed to map SHM (%s): %s\n", name, strerror(errno));
     exit(1);
   }
 
@@ -384,9 +392,9 @@ mmap_shm_sysv (key_t key, size_t sz, int *id)
   // Our parent already marked the SHMs for removal, so they will
   // cleaned up for us later.
   fprintf(stderr, "mmap_shm getting shm %d ...\n", key);
-  shmid = shmget(key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
+  shmid = shmget(1337+key, sz, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
   if (shmid == -1) {
-    fprintf(stderr, "stdiowrap: Fail to get SHM with key %d: %s\n",
+    fprintf(stderr, "pool: Fail to get SHM with key %d: %s\n",
             key, strerror(errno));
     exit(EXIT_FAILURE);
   }
@@ -395,7 +403,7 @@ mmap_shm_sysv (key_t key, size_t sz, int *id)
   fprintf(stderr, "mmap_shm attaching shm %d ...\n", key);
   shm = shmat(shmid, NULL, 0);
   if (shm == ((void *) -1)) {
-    fprintf(stderr, "stdiowrap: Failed to attach SHM with key %d: %s\n",
+    fprintf(stderr, "pool: Failed to attach SHM with key %d: %s\n",
             key, strerror(errno));
     exit(EXIT_FAILURE);
   }
@@ -414,7 +422,14 @@ create_shm_posix (const char *name, long shmsz, int *fd)
   void *shm;
   int   shmfd;
 
+#ifdef HSP_TMP_SHM
+  char shmname[256];
+  sprintf(shmname, "/tmp%s", name);
+  shmfd = open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#else
   shmfd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#endif
+
   if (shmfd < 0) {
     fprintf(stderr, "Failed to make pool SHM: %s\n",strerror(errno));
     exit(EXIT_FAILURE);
@@ -453,9 +468,9 @@ create_shm_sysv (key_t id, long shmsz, int *fd)
   // As soon as all attachments are gone, the segment will be
   // destroyed by the OS.
   fprintf(stderr, "create_shm getting shm %d ...\n", id);
-  shmfd = shmget(id, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  shmfd = shmget(IPC_PRIVATE/*1337+id*/, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
   if (shmfd < 0) {
-    fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n", shmsz, strerror(errno));
+    fprintf(stderr, "Failed to make pool SHM of size %ld: %s. Terminating.\n", shmsz, strerror(errno));
     exit(EXIT_FAILURE);
   }
   fprintf(stderr, "create_shm attaching shm %d ...\n", id);
@@ -463,7 +478,7 @@ create_shm_sysv (key_t id, long shmsz, int *fd)
   fprintf(stderr, "create_shm controlling shm %d ...\n", id);
   shmctl(shmfd, IPC_RMID, NULL);
   if (shm == ((void*)-1)) {
-    fprintf(stderr, "Failed to attach SHM. Terminating.\n");
+    fprintf(stderr, "Failed to attach pool SHM. Terminating.\n");
     exit(EXIT_FAILURE);
   }
 

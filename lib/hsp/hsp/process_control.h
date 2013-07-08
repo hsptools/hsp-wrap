@@ -19,6 +19,12 @@ typedef int16_t wid_t;
 #define SCN_WID SCNu16
 #define BAD_WID 0xFFFF
 
+enum file_type {
+  FTE_INPUT,
+  FTE_OUTPUT,
+  FTE_SHARED
+};
+
 /**
  * File description for a virtual file
  */
@@ -30,6 +36,7 @@ struct file_table_entry {
   wid_t  wid;                 // Worker ID owning this file, -1 if shared TODO: N:M mapping
   size_t size;                // Size of the actual file data within the SHM
   char   name[MAX_FILE_PATH]; // Virtual name (path) of the file 
+  enum file_type type;        // Type of mapping (in/out/shared)
 
   // Private (TODO: Move outside of file_table)
   char  *shm;                 // Pointer to shared data
@@ -92,7 +99,8 @@ struct process_control {
 
 
 struct process_control *ps_ctl_init (unsigned nprocesses, int *fd);
-void *ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid, const char *name, size_t sz);
+void *ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid,
+                       const char *name, size_t sz, enum file_type type);
 int   ps_ctl_all_done (struct process_control *ps_ctl);
 int   ps_ctl_all_running (struct process_control *ps_ctl);
 int   ps_ctl_all_waiting (struct process_control *ps_ctl);

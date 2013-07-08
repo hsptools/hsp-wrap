@@ -82,7 +82,8 @@ ps_ctl_init (unsigned nprocesses, int *ps_ctl_fd)
 
 
 void *
-ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid, const char *name, size_t sz)
+ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid,
+                 const char *name, size_t sz, enum file_type type)
 {
     void *shm;
     int   fd, j;
@@ -101,6 +102,7 @@ ps_ctl_add_file (struct process_control *ps_ctl, wid_t wid, const char *name, si
       ps_ctl->ft.file[j].shm_size = sz;
       ps_ctl->ft.file[j].wid      = wid;
       ps_ctl->ft.file[j].size     = (wid == -1) ? sz : 0;
+      ps_ctl->ft.file[j].type     = type;
       strcpy(ps_ctl->ft.file[j].name, name);
 
       ps_ctl->ft.nfiles++;
@@ -174,12 +176,16 @@ create_shm_posix (const char *name, long shmsz, int *fd)
   int   shmfd;
   char  shmname[256];
 
-  snprintf(shmname, 256, "/hspwrap.%d.%s", getpid(), name);
-
   // Create the shared memory segment, and then mark for removal.
   // As soon as all attachments are gone, the segment will be
   // destroyed by the OS.
+#ifdef HSP_TMP_SHM
+  snprintf(shmname, 256, "/tmp/hspwrap.%d.%s", getpid(), name);
+  shmfd = open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#else
+  snprintf(shmname, 256, "/hspwrap.%d.%s", getpid(), name);
   shmfd = shm_open(shmname, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#endif
   if (shmfd < 0) {
     fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n",shmsz,strerror(errno));
     exit(EXIT_FAILURE);
@@ -218,7 +224,7 @@ create_shm_sysv (int offset, long shmsz, int *fd)
   // As soon as all attachments are gone, the segment will be
   // destroyed by the OS.
   fprintf(stderr, "Create_shm getting shm %d ...\n", id);
-  shmfd = shmget(id, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
+  shmfd = shmget(1337+id, shmsz, IPC_CREAT | IPC_EXCL | S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
   if (shmfd < 0) {
     fprintf(stderr, "Failed to make SHM of size %ld: %s. Terminating.\n", shmsz, strerror(errno));
     exit(EXIT_FAILURE);

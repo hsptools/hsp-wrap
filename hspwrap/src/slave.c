@@ -36,18 +36,24 @@ static int  mkpath (const char *path, mode_t mode);
 static int  request_work (struct cache_buffer **queue);
 static void push_work (wid_t wid, const char *data, size_t len);
 static void pull_results (struct writer_ctx *w, wid_t wid);
+static void pull_worker_results (wid_t wid);
+static int  create_stream_files (const char *files, size_t size,
+                                 enum file_type type, char ***names);
 
 // TODO: add slave_ctx to wrap this stuff
 extern struct process_pool_ctl *pool_ctl;
-struct writer_ctx writer;
+struct writer_ctx *writers;
 struct process_control *ps_ctl;
 int    sid;
 char  *outdir, *workdir;
+char **infiles, **outfiles;
+int    ninfiles, noutfiles;
 
 void
 slave_init (int slave_idx, int nslaves, int nprocesses)
 {
   int rc, i;
+  char *files;
 
   sid = slave_idx;
 
@@ -79,10 +85,20 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
   // Prepare process control structure and streaming SHMs
   ps_ctl = ps_ctl_init(nprocesses, NULL);
 
-  for (i = 0; i < nprocesses; ++i) {
-    ps_ctl_add_file(ps_ctl, i, "inputfile", BUFFER_SIZE);
-    ps_ctl_add_file(ps_ctl, i, "outputfile", BUFFER_SIZE);
+  // Create input file mappings
+  files = getenv("HSP_INFILES");
+  if (!files) files = "inputfile";
+  // TODO: Support multiple input files
+  if (strchr(files, ':')) {
+    fprintf(stderr, "slave %d: Multiple input files are not yet supported.\n", sid);
+    exit(EXIT_FAILURE);
   }
+  ninfiles = create_stream_files(files, BUFFER_SIZE, FTE_INPUT, &infiles);
+
+  // Create output files mappings
+  files = getenv("HSP_OUTFILES");
+  if (!files) files = "outputfile";
+  noutfiles = create_stream_files(files, BUFFER_SIZE, FTE_OUTPUT, &outfiles);
 }
 
 
@@ -90,29 +106,37 @@ slave_init (int slave_idx, int nslaves, int nprocesses)
 //free(workdir);
 
 
-void
+ssize_t
 slave_broadcast_shared_file(const char *path)
 {
   void  *shm;
   size_t sz;
+  int rc;
 
   // Get file size
   MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
 
   // Get shared-file data, and add to file table
-  shm = ps_ctl_add_file(ps_ctl, -1, path, sz);
+  shm = ps_ctl_add_file(ps_ctl, -1, path, sz, FTE_SHARED);
 
   // write data (MPI+mmap work-around)
-  chunked_bcast(shm, sz, 0, MPI_COMM_WORLD);
+  rc = chunked_bcast(shm, sz, 0, MPI_COMM_WORLD);
+ 
+  if (rc == MPI_SUCCESS) {
+    return sz;
+  } else {
+    return -1;
+  }
 }
 
 
-void
+ssize_t
 slave_broadcast_work_file(const char *path)
 {
   void   *file;
   size_t  sz;
   int     fd;
+  int     rc;
 
   // Get file size
   trace("slave: Receiving work file size...\n");
@@ -139,12 +163,18 @@ slave_broadcast_work_file(const char *path)
     exit(EXIT_FAILURE);
   }
 
-  // write data (MPI+mmap work-around)
-  chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
+  // write data (MPI+mmap work-around) FIXME: Handle return
+  rc = chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
 
   // unmap and such
   munmap(file, sz);
   close(fd);
+
+  if (rc == MPI_SUCCESS) {
+    return sz;
+  } else {
+    return -1;
+  }
 }
 
 
@@ -161,8 +191,11 @@ slave_main (const char *cmd)
 
   // TODO: Maybe move some stuff to a slave_init() function
 
-  // Spawn and initialize writer thread
-  writer_start(&writer, BUFFER_SIZE * ps_ctl->nprocesses);
+  // Spawn and initialize writer threads
+  writers = malloc(noutfiles * sizeof(struct writer_ctx));
+  for (i = 0; i < noutfiles; ++i) {
+    writer_start(&writers[i], outfiles[i], BUFFER_SIZE * ps_ctl->nprocesses);
+  }
 
   // Initial (empty) data
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
@@ -227,12 +260,12 @@ slave_main (const char *cmd)
         // front buffer empty implies whole queue is empty
         if (!no_work && queue == NULL) {
           // No data in the buffer, must request now
-          no_work = !request_work(&queue);
+          no_work = (request_work(&queue) == -1);
         }
 
         // Preemptively flush the results while the processes is stopped
         // FIXME: Don't do this if this is the initial EOD (first request for data)
-        pull_results(&writer, wid);
+        pull_worker_results(wid);
 
         if (queue != NULL) {
           // Handle data request locally
@@ -272,7 +305,7 @@ slave_main (const char *cmd)
         // FIXME: This will result in fragmentation of the output data
         // we need to maintain an index so output can be pieced back in
         // proper order by the 'gather' script
-        pull_results(&writer, wid);
+        pull_worker_results(wid);
         info("slave %d: Buffer almost overflowed, result data is probably interleaved\n", sid);
         ps_ctl->process_cmd[wid] = RUN;
         ps_ctl->process_state[wid] = RUNNING;
@@ -296,7 +329,7 @@ slave_main (const char *cmd)
 
     // Prefetch data if needed
     if (!no_work) {
-      no_work = !request_work(&queue);
+      no_work = (request_work(&queue) == -1);
     }
   }
 
@@ -308,15 +341,19 @@ slave_main (const char *cmd)
   // Flush last bit of data
   pthread_mutex_lock(&ps_ctl->lock);
   for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
-    pull_results(&writer, wid);
+    pull_worker_results(wid);
   }
   pthread_mutex_unlock(&ps_ctl->lock);
 
-  // Join with writer thread
-  writer.running = 0;
-  pthread_cond_signal(&writer.data_pending);
-  pthread_join(writer.thread, NULL);
-  info("slave %d: Writer thread successfully exited\n", sid);
+  // Join with writer threads
+  for (i = 0; i < noutfiles; ++i) {
+    writers[i].running = 0;
+    pthread_cond_signal(&writers[i].data_pending);
+  }
+  for (i = 0; i < noutfiles; ++i) {
+    pthread_join(writers[i].thread, NULL);
+    info("slave %d: Writer thread %d successfully exited\n", sid, i);
+  }
 
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000
            + (tv[1].tv_usec - tv[0].tv_usec);
@@ -379,7 +416,6 @@ request_work (struct cache_buffer **queue)
   struct cache_buffer *b, *tail;
   struct request  req;
   struct workunit wu;
-  MPI_Request mpi_req[2];
   int cnt, rc;
 
   // See how much data we have and find tail
@@ -388,10 +424,17 @@ request_work (struct cache_buffer **queue)
     tail = b;
   }
 
-  // request work units from master
+  // Don't actually *need* data right now.
+  // FIXME: Consider better prefetching policy. We are always prefetching if we can,
+  //        but we probably want to let requests add up, and request a bundle.
+  if (cnt > ps_ctl->nprocesses/2) {
+    return 0;
+  }
+
   req.type  = REQ_WORKUNIT;
   req.count = ps_ctl->nprocesses - cnt;
 
+  // request work units from master
   trace("slave %d: requesting work...\n", sid);
   rc = MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
            TAG_REQUEST, MPI_COMM_WORLD);
@@ -409,7 +452,7 @@ request_work (struct cache_buffer **queue)
   // Figure out what to do with the response
   switch (wu.type) {
   case WU_TYPE_EXIT:
-    return 0;
+    return -1;
 
   case WU_TYPE_DATA:
     // Prepare buffer, and read data
@@ -450,7 +493,7 @@ push_work (wid_t wid, const char *data, size_t len)
   ft = &ps_ctl->ft;
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
-    if (f->wid == wid && !strcmp(f->name, "inputfile")) {
+    if (f->wid == wid && f->type == FTE_INPUT) {
       // Prepare data buffer(s)
       memcpy(f->shm, data, len);
       f->size = len;
@@ -463,7 +506,7 @@ push_work (wid_t wid, const char *data, size_t len)
  * "Pull" results from a worker's output buffers and send to the writer.
  * This function must be called with a lock on the shared process-control
  * structure since it modifies a worker's buffers (although the worker should
- * be halted). */
+ * be halted at this point). */
 static void
 pull_results (struct writer_ctx *ctx, wid_t wid)
 {
@@ -474,7 +517,7 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
   ft = &ps_ctl->ft;
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
-    if (f->wid == wid && !strcmp(f->name, "outputfile")) {
+    if (f->wid == wid && !strcmp(f->name, ctx->name)) {
       // Write it out, it is an output file that belongs to us
       writer_write(ctx, f->shm, f->size);
 
@@ -482,4 +525,61 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
       f->size = 0;
     }
   }
+}
+
+static void
+pull_worker_results (wid_t wid)
+{
+  int i, j;
+  struct file_table *ft;
+  struct file_table_entry *f;
+  struct writer_ctx *ctx;
+
+  ft = &ps_ctl->ft;
+  for (i = 0; i < ft->nfiles; ++i) {
+    f = &ft->file[i];
+    if (f->wid == wid && f->type == FTE_OUTPUT) {
+      // Found a outfile matching this worker, find the writer
+      for (j = 0; j < noutfiles; ++j) {
+        ctx = &writers[j];
+        if (!strcmp(f->name, ctx->name)) {
+          // Write it out, it is an output file that belongs to us
+          writer_write(ctx, f->shm, f->size);
+
+          // Mark buffer as empty
+          f->size = 0;
+        }
+      }
+    }
+  }
+}
+
+
+
+// User is responsible for freeing *names[0] and *names
+static int
+create_stream_files (const char *files, size_t size,
+                     enum file_type type, char ***names)
+{
+  int i, j, cnt;
+  char *fs, *fn;
+
+  assert(names);
+
+  // Count and create space for names
+  for (i=0, cnt=1; files[i]; ++i) {
+    if (files[i] == ':') ++cnt;
+  }
+  *names = malloc(cnt * sizeof(char *));
+
+  // Now, parse string and create files
+  fs = strdup(files);
+  for (i=0, fn = strtok(fs, ":"); fn; fn = strtok(NULL, ":"), ++i) {
+    for (j = 0; j < ps_ctl->nprocesses; ++j) {
+      ps_ctl_add_file(ps_ctl, j, fn, size, type);
+    }
+    (*names)[i] = fn;
+  }
+
+  return cnt;
 }

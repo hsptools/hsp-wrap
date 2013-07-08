@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <error.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,21 +35,76 @@ struct master_ctx {
 static void wait_sends (struct master_ctx *ctx, int slave_idx);
 
 extern struct process_pool_ctl *pool_ctl;
+extern size_t bcast_chunk_size;
+
+struct reader_ctl {
+  pthread_cond_t cmd_ready;
+  pthread_cond_t data_ready;
+  pthread_mutex_t lock;
+
+  ssize_t  read_cnt;
+  char    *buf;
+  int      fd;
+};
+
+pthread_t reader_thread;
+struct reader_ctl reader;
+
+void *
+master_reader (void *arg)
+{
+  ssize_t cnt;
+  while (1) {
+    // Get cmd
+    pthread_mutex_lock(&reader.lock);
+    while (reader.read_cnt == 0) {
+      pthread_cond_wait(&reader.cmd_ready, &reader.lock);
+    }
+    cnt = reader.read_cnt;
+    pthread_mutex_unlock(&reader.lock);
+
+    // Handle exit
+    if (reader.read_cnt == -1) {
+      break;
+    }
+
+    // Do the read
+
+    pthread_mutex_lock(&reader.lock);
+    // copy buffer
+    pthread_cond_signal(&reader.data_ready);
+    pthread_mutex_unlock(&reader.lock);
+  }
+  return NULL;
+}
 
 void
 master_init ()
 {
-  // NO-OP
+  int rc;
+
+  // TODO: threaded read
+  /*
+  pthread_cond_init(&reader.cmd_ready, NULL);
+  pthread_cond_init(&reader.data_ready, NULL);
+  pthread_mutex_init(&reader.lock, NULL);
+  reader.read_cnt = 0;
+  reader.buf = malloc(bcast_chunk_size);
+
+  rc = pthread_create(&reader_thread, NULL, master_reader, &reader);
+  */
 }
 
 
-void
+ssize_t
 master_broadcast_file (const char *path)
 {
   struct stat st;
-  void  *file;
-  size_t sz;
-  int    fd;
+  char  *chunk;
+  size_t chunk_sz, next_sz, sz, br;
+  ssize_t b;
+  off_t  chunk_off, next_off;
+  int    fd, rc;
 
   // Open file
   if ((fd = open(path, O_RDONLY)) == -1) {
@@ -56,30 +112,81 @@ master_broadcast_file (const char *path)
     exit(EXIT_FAILURE);
   }
 
-  // Broadcast file size
+  // Get file size
   if (fstat(fd, &st) < 0) {
-    close(fd);
     fprintf(stderr, "%s: Could not stat file: %s\n", path, strerror(errno));
     exit(EXIT_FAILURE);
   }
-  sz = st.st_size;
-  MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
+  sz  = st.st_size;
+  lseek(fd, 0, SEEK_SET);
 
-  // Read and broadcast data into slave's SHMs
-  file = mmap(NULL, sz, PROT_READ, MAP_SHARED /*MAP_HUGETLB*/, fd, 0);
-  if (file == MAP_FAILED) {
-    close(fd);
-    fprintf(stderr, "%s: Could not mmap file: %s\n", path, strerror(errno));
+  // Tell reader where to read from
+  // TODO: threaded read
+  /*
+  reader.fd = fd;
+  */
+
+  // We will read sequentially
+  posix_fadvise(fd, 0, sz, POSIX_FADV_SEQUENTIAL);
+
+  // Create buffer
+  chunk = malloc(MIN(bcast_chunk_size, sz));
+  if (!chunk) {
+    fprintf(stderr, "Couldn't allocate buffer for broadcast: %s", strerror(errno));
     exit(EXIT_FAILURE);
   }
 
-  // send data (MPI+mmap work-around)
-  chunked_bcast(file, sz, 0, MPI_COMM_WORLD);
+  // Init counters  
+  next_off = 0;
+  next_sz = MIN(bcast_chunk_size, sz);
 
-  // Done broadcasting file, sender will no longer need it (for now)
-  trace("master: broadcasted file %s with size %zu\n", path, sz);
-  munmap(file, sz);
+  // Page-in next chunk
+  posix_fadvise(fd, next_off, next_sz, POSIX_FADV_WILLNEED);
+  // TODO: threaded read
+  /*
+  pthread_mutex_lock(&reader.lock);
+  reader.reader_cnt = next_sz;
+  pthread_cond_signal(&reader.cmd_ready);
+  pthread_mutex_unlock(&reader.lock);
+  */
+
+  // Broadcast the size
+  MPI_Bcast(&sz, sizeof(sz), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+  while (next_off < sz) {
+    // Read the current chunk
+    chunk_off = next_off;
+    chunk_sz  = next_sz;
+
+    for (br=0; br<chunk_sz; br+=b) {
+      b = read(fd, &chunk[br], chunk_sz-br);
+      if (b == -1) {
+	fprintf(stderr, "Couldn't read file during broadcast: %s", strerror(errno));
+	exit(EXIT_FAILURE);
+      }
+    }
+
+    // We don't need this data cached anymore, but need the next one
+    next_off += chunk_sz;
+    next_sz = MIN(bcast_chunk_size, sz - next_off);
+    posix_fadvise(fd, chunk_off, chunk_sz, POSIX_FADV_DONTNEED);
+    posix_fadvise(fd, next_off, next_sz, POSIX_FADV_WILLNEED);
+
+    // Broadcast and handle error
+    rc = MPI_Bcast(chunk, chunk_sz, MPI_BYTE, 0, MPI_COMM_WORLD);
+    if (rc != MPI_SUCCESS) {
+      free(chunk);
+      close(fd);
+      return rc;
+    }
+  }
   close(fd);
+
+  if (rc == MPI_SUCCESS) {
+    return sz;
+  } else {
+    return -1;
+  }
 }
 
 
@@ -131,7 +238,7 @@ master_main (int nslaves)
 
   // Load Query file
   // TODO: break "load, and map" code into a function
-  in_path = getenv("HSP_QFILE");
+  in_path = getenv("HSP_INFILES");
   if ((in_fd = open(in_path, O_RDONLY)) == -1) {
     fprintf(stderr, "master: %s: Could not open file: %s\n", in_path, strerror(errno));
     exit(EXIT_FAILURE);
