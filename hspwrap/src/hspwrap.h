@@ -22,8 +22,8 @@
 // Tag for slave messages
 #define TAG_REQUEST 3
 
-#define trace(...) fprintf(stderr, __VA_ARGS__)
-//#define trace(...) 
+//#define trace(...) fprintf(stderr, __VA_ARGS__)
+#define trace(...) 
 
 #define info(...) fprintf(stderr, __VA_ARGS__)
 //#define info(fmt, ...) 

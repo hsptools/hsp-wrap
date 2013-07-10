@@ -219,7 +219,7 @@ slave_main (const char *cmd)
   process_pool_spawn(pool_ctl, workdir, ps_ctl->nprocesses);
   MPI_Barrier(MPI_COMM_WORLD);
 
-  info("slave %d: Waiting for service requests.\n", sid);
+  trace("slave %d: Waiting for service requests.\n", sid);
 
   // Count number of tasks assigned to each worker
   unsigned worker_iterations[MAX_PROCESSES];
@@ -352,7 +352,7 @@ slave_main (const char *cmd)
   }
   for (i = 0; i < noutfiles; ++i) {
     pthread_join(writers[i].thread, NULL);
-    info("slave %d: Writer thread %d successfully exited\n", sid, i);
+    trace("slave %d: Writer thread %d successfully exited\n", sid, i);
   }
 
   long t = (tv[1].tv_sec - tv[0].tv_sec) * 1000000

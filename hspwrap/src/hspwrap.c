@@ -71,9 +71,11 @@ timing_print(struct timing *t)
   fprintf(stderr, "  Database Broadcast: %8.2lf s (%.2lf KB/s)\n",
           s, ((double)t->db_kbytes)/s);
 
+  /*
   fprintf(stderr, "%lld.%.9ld, %lld.%.9ld\n",
       (long long)t->db_start.tv_sec, t->db_start.tv_nsec,
-      (long long)t->db_end.tv_sec, t->db_end.tv_nsec);
+      (long long)t->db_end.tv_sec, t->db_end.tv_nsec);/
+  */
 }
 
 ////
@@ -139,7 +141,7 @@ main (int argc, char **argv)
 #ifndef TIMING_MODE
   sleep(1);
   pool_ctl = process_pool_fork();
-  info("Process pool created.\n");
+  trace("Process pool created.\n");
   sleep(1);
 #endif
 
@@ -149,11 +151,10 @@ main (int argc, char **argv)
     fprintf(stderr, "Error initialize MPI.\n");
     return EXIT_FAILURE;
   }
-  info("MPI Initialized.\n");
 
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &ranks);
-  info("MPI Stats aquired.\n");
+  trace("MPI Initialized.\n");
 
   // Initialize our state
   timing_init(&timing);
@@ -172,9 +173,7 @@ main (int argc, char **argv)
   }
 
   // Distribute DB files
-  fprintf(stderr, "At barrier...\n");
   MPI_Barrier(MPI_COMM_WORLD);
-  fprintf(stderr, "Past barrier.\n");
   timing_record(&timing.db_start);
 
   char *dbdir   = getenv("HSP_DBDIR");

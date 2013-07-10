@@ -349,10 +349,10 @@ process_pool_fork ()
 
       // Start child processes
       if (pool_ctl->nprocesses > 0) {
-        info("Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
+        trace("Spawning process pool... (%d processes)\n", pool_ctl->nprocesses);
         process_pool_start(hspwrap_pid, pool_ctl->workdir, pool_ctl->nprocesses);
       } else {
-        info("Killing process pool...\n");
+        trace("Killing process pool...\n");
       }
     } else {
       fprintf(stderr, "Could not fork process pool.  Terminating.\n");
@@ -379,9 +379,9 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
 
   // Set global state for process_pool TL
   fprintf(stderr, "Process pool pid %d under wrapper pid %d is starting...\n"
-      "cwd:       %s\n"
-      "workdir:   %s\n"
-      "processes: %d\n",
+      "  cwd: %s\n"
+      "  workdir:   %s\n"
+      "  processes: %d\n",
       getpid(), wrapper_pid, getcwd(NULL, 0), workdir, nproc);
 
   // Read config
@@ -421,7 +421,7 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
     if (fork_worker(wid, "exefile")) {
       fprintf(stderr, "Failed to fork worker %" PRI_WID "\n", wid);
     } else {
-      fprintf(stderr, "Worker %" PRI_WID " started.\n", wid);
+      trace("Worker %" PRI_WID " started.\n", wid);
       forked++;
     }
   }

@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "hspwrap.h"
 #include "writer.h"
 
 static void * writer_main (void *arg);
@@ -52,7 +53,8 @@ writer_main (void *arg)
     if (bytes == -1) {
       fprintf(stderr, "Couldn't write output: %s\n", strerror(errno));
     } else {
-      fprintf(stderr, "Wrote %zd of %zu bytes\n", bytes, ctx->back_len);
+      trace("Wrote %zd of %zu bytes\n", bytes, ctx->back_len);
+      // FIXME: Loop until everything is actually written (bytes < back_len)
     }
     fsync(fd);
     ctx->back_len = 0;

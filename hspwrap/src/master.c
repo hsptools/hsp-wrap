@@ -269,7 +269,7 @@ master_main (int nslaves)
     in_cnt++;
     in_s = in_e;
   }
-  info("master: %u inputs\n", in_cnt);
+  info("master: Counted %u inputs\n", in_cnt);
 
   max_nseqs = in_cnt / nslaves;
   wu_nseqs  = 1;

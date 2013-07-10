@@ -37,7 +37,7 @@ def configure(conf):
     conf.load('compiler_mpi_c', tooldir=tool_dir)
 
     # Warn about almost anything
-    conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall', '-g', '-ggdb', '-O0']) #, '-Werror'])
+    conf.env.append_unique('CFLAGS', ['-std=gnu99', '-Wall']) #, '-Werror'])
 
     # Hack
     #conf.env.DEFINES += ['HSP_SYSV_SHM=1']
