@@ -35,6 +35,8 @@ def build(bld):
     if bld.env['HAVE_LIBEXPAT']:
         bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
     """
+    
+    bld.program(source='src/hspclean.c', target='hspclean')
 
     # MCW-enabled demos
     bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap', lib='rt')

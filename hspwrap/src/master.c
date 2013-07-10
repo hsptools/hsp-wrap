@@ -278,6 +278,8 @@ master_main (int nslaves)
   MPI_Barrier(MPI_COMM_WORLD);
   process_pool_spawn(pool_ctl, ".", -1);
   MPI_Barrier(MPI_COMM_WORLD);
+
+  info("master: Issuing jobs...\n");
   
   // Post a receive work request for each slave
   for (slave_idx=0; slave_idx<nslaves; ++slave_idx) {
