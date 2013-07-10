@@ -1,6 +1,7 @@
 // Enable Linux sched support for cpu-affinity right now
 #define _GNU_SOURCE 
 
+#include <ctype.h>
 #include <errno.h>
 #include <error.h>
 #include <stdio.h>
@@ -33,14 +34,17 @@ struct worker_process {
 };
 
 
-static wid_t  worker_for_pid (pid_t pid);
-static int    fork_worker (wid_t wid, const char *exe);
 static struct process_pool_ctl *process_pool_ctl_init (pid_t hspwrap_pid);
+
 static void *create_shm_posix (const char *name, long shmsz, int *fd);
 static void *create_shm_sysv (int offset, long shmsz, int *fd);
+
 static void *mmap_shm_posix (const char *name, size_t sz, int *fd);
 static void *mmap_shm_sysv (key_t key, size_t sz, int *id);
 
+static wid_t  worker_for_pid (pid_t pid);
+static int    fork_worker (wid_t wid, const char *exe);
+static char **parse_cmdline (char *cmdline); 
 //// State
 
 // Process ID of HSP-wrap process
@@ -49,6 +53,8 @@ int hspwrap_pid;
 int nprocesses;
 // Keep track of PIDs assigned to workers
 struct worker_process worker_ps[MAX_PROCESSES];
+// Args for forking
+char **argv;
 
 //// Definitions
 
@@ -99,7 +105,7 @@ fork_worker (wid_t wid, const char *exe)
 
     // -p blastp -d nr-5m/nr-5m -i sample-16.fasta -o blast.out
     // if (execle(exe, "blastall", "-p", "blastp", "-d", "nr-5m/nr-5m", "-i", "inputfile", "-o", "outputfile", "-m", "7", "-a", "1", NULL, env_list)) {
-    if (execle(exe, "test-db", "output", "fun.txt", "nr-5m/BLOSUM62", "log", NULL, env_list)) {
+    if (execve(exe, argv, env_list)) {
       fprintf(stderr, "Could not exec: %s\n", strerror(errno));
       exit(EXIT_FAILURE);
     }
@@ -122,6 +128,118 @@ fork_worker (wid_t wid, const char *exe)
   }
   return -1;
 }
+
+
+enum parse_cmdline_state {
+  PCL_NIL,
+  PCL_WORD,
+  PCL_DQUOTE,
+  PCL_SQUOTE,
+};
+
+/*
+ * Parses a command line string into an argument vector (as a shell would do).
+ * This function can deal with quoted arguments for spaces, as well as nested
+ * quotes.  FIXME: Could use lots of work: escaped quotes, other escaped
+ * characters, anyway, this works reasonably.
+ */
+static char **
+parse_cmdline (char *cmdline)
+{
+  enum parse_cmdline_state q;
+  char **args, **a;
+  char *p, *r;
+  int cnt;
+
+  // Parse
+  q = PCL_NIL;
+  r = cmdline;
+  cnt = 0;
+  for (p=cmdline; *p; ++p) {
+    switch (q) {
+      // Whitespace between words and strings
+      case PCL_NIL:
+        if (isspace(*p)) {
+          continue;
+        }
+        switch (*p) {
+          case '"':
+            q = PCL_DQUOTE;
+            continue;
+          case '\'':
+            q = PCL_SQUOTE;
+            continue;
+          default:
+            q = PCL_WORD;
+            *r++ = *p;
+            continue;
+        }
+
+      // Unquoted string
+      case PCL_WORD:
+        if (isspace(*p)) {
+          *r++ = '\0';
+          cnt++;
+          q = PCL_NIL;
+          continue;
+        }
+        switch (*p) {
+          case '"':
+            q = PCL_DQUOTE;
+            continue;
+          case '\'':
+            q = PCL_SQUOTE;
+            continue;
+          default:
+            *r++ = *p;
+            continue;
+        }
+
+      // Double-quoted string
+      case PCL_DQUOTE:
+        if (*p == '"') {
+          q = PCL_WORD;
+        } else {
+          *r++ = *p;
+        }
+        continue;
+
+      // Single-quoted string
+      case PCL_SQUOTE:
+        if (*p == '\'') {
+          q = PCL_WORD;
+        } else {
+          *r++ = *p;
+        }
+        continue;
+    }
+  }
+  // Null terminate last word (if any)
+  if (q == PCL_WORD) {
+    *r++ = '\0';
+    cnt++;
+  }
+
+  // Build array
+  args = malloc((cnt+1) * sizeof(char *));
+  a = args;
+  p = cmdline;
+  while (cnt) {
+    // Mark beginning of argument
+    *a++ = p;
+    // Eat rest of argument
+    while (*p != '\0') {
+      p++;
+    }
+    // Eat null
+    p++;
+    cnt--;
+  }
+  *a = NULL;
+
+  return args;
+}
+
 
 
 static struct process_pool_ctl *
@@ -265,6 +383,16 @@ process_pool_start (pid_t wrapper_pid, const char *workdir, int nproc)
       "workdir:   %s\n"
       "processes: %d\n",
       getpid(), wrapper_pid, getcwd(NULL, 0), workdir, nproc);
+
+  // Read config
+  char *cmdline = getenv("HSP_EXEARGS");
+  if (cmdline) {
+    // FIXME: leaks the duplicate, doesn't check for NULL
+    argv = parse_cmdline(strdup(cmdline));
+  } else {
+    fprintf(stderr, "Missing HSP_EXEARGS enivronment variable\n");
+    exit(EXIT_FAILURE);
+  }
 
   if (chdir(workdir)) {
     fprintf(stderr, "Pool failed to chdir: %s\n", strerror(errno));
@@ -489,3 +617,4 @@ create_shm_sysv (key_t id, long shmsz, int *fd)
   }
   return shm;
 }
+
