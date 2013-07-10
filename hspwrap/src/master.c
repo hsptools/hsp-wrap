@@ -209,6 +209,7 @@ master_main (int nslaves)
   int req_idx, req_type, nreqs;
   int nrunning;
   int outstandings[nslaves], outstanding;
+  int percent, last_percent;
 
   // Init data structures
   seq_idx     = 0;
@@ -292,6 +293,7 @@ master_main (int nslaves)
 
   // Update slave states
   in_s = in_data;
+  percent = last_percent = 0;
   while (seq_idx < in_cnt) {
     // Wait until any request completes
     MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
@@ -390,6 +392,12 @@ master_main (int nslaves)
         }
       }
       //}
+      
+    percent = 100 * seq_idx / in_cnt;
+    if (percent != last_percent) {
+      fprintf(stderr, "master: %d%% percent complete\n", percent);
+      last_percent = percent;
+    }
 
   } // End service loop
 

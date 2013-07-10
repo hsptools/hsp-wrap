@@ -20,7 +20,7 @@ main (int argc, char **argv)
 {
   char *dirn;
   DIR  *dirp;
-  int   fildes;
+  int   fildes, cleaned, failed;
   struct dirent *dp;
 
   switch (argc) {
@@ -28,19 +28,24 @@ main (int argc, char **argv)
     dirn = "/dev/shm";
     break;
   case 2:
+    if (strcmp(argv[1], "--help") == 0) {
+      usage(stdout);
+      return EXIT_SUCCESS;
+    }
     dirn = argv[1];
     break;
   default:
-    fprintf(stderr, "Incorrect number of arguments.\n");
+    fprintf(stderr, "hspclean: Incorrect number of arguments.\n");
     usage(stderr);
     exit(EXIT_FAILURE);
   }
 
+  cleaned = failed = 0;
   dirp = opendir(dirn);
   fildes = open(dirn, O_RDONLY);
 
   if (!dirp || fildes == -1) {
-    fprintf(stderr, "%s: Could not open: %s\n", dirn, strerror(errno));
+    fprintf(stderr, "hspclean: %s: Could not open: %s\n", dirn, strerror(errno));
     return EXIT_FAILURE;
   }
 
@@ -50,8 +55,11 @@ main (int argc, char **argv)
       if (strncmp(dp->d_name, "hspwrap.", 8) == 0) {
         // Found one, remove it
         if (unlinkat(fildes, dp->d_name) == -1) {
-          fprintf(stderr, "%s: Could not remove file: %s\n", dp->d_name, strerror(errno));
-        }
+          fprintf(stderr, "hspclean: %s: Could not remove file: %s\n", dp->d_name, strerror(errno));
+	  failed++;
+        } else {
+	  cleaned++;
+	}
       }
     } else if (errno == 0) {
       // End of list
@@ -59,10 +67,16 @@ main (int argc, char **argv)
       break;
     } else {
       // Error 
-      fprintf(stderr, "%s: Could not read directory: %s\n", dirn, strerror(errno));
+      fprintf(stderr, "hspclean: %s: Could not read directory: %s\n", dirn, strerror(errno));
       closedir(dirp);
       return EXIT_FAILURE;
     }
+  }
+
+  if (failed) {
+    printf("hspclean: Removed %d files, %d failed.\n", cleaned, failed);
+  } else {
+    printf("hspclean: Removed %d files\n", cleaned);
   }
 
   return EXIT_SUCCESS;
