@@ -20,7 +20,7 @@ main (int argc, char **argv)
 {
   char *dirn;
   DIR  *dirp;
-  int   fildes, cleaned, failed;
+  int   cleaned, failed;
   struct dirent *dp;
 
   switch (argc) {
@@ -42,19 +42,20 @@ main (int argc, char **argv)
 
   cleaned = failed = 0;
   dirp = opendir(dirn);
-  fildes = open(dirn, O_RDONLY);
 
-  if (!dirp || fildes == -1) {
+  if (!dirp) {
     fprintf(stderr, "hspclean: %s: Could not open: %s\n", dirn, strerror(errno));
     return EXIT_FAILURE;
   }
+
+  chdir(dirn);
 
   while (1) {
     errno = 0;
     if ((dp = readdir(dirp)) != NULL) {
       if (strncmp(dp->d_name, "hspwrap.", 8) == 0) {
         // Found one, remove it
-        if (unlinkat(fildes, dp->d_name) == -1) {
+        if (unlink(dp->d_name) == -1) {
           fprintf(stderr, "hspclean: %s: Could not remove file: %s\n", dp->d_name, strerror(errno));
 	  failed++;
         } else {

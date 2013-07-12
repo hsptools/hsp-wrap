@@ -295,9 +295,13 @@ master_main (int nslaves)
   in_s = in_data;
   percent = last_percent = 0;
   while (seq_idx < in_cnt) {
+    // Limit by max number of sequences
+    if (max_nseqs > in_cnt-seq_idx) {
+      max_nseqs = in_cnt-seq_idx;
+    }
+
     // Wait until any request completes
     MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
-
     //MPI_Waitsome(nreqs, ctx.mpi_req, &nidxs, idxs, MPI_STATUSES_IGNORE);
     //for (i=0; i<nidxs; ++i) {
     //  req_idx = idxs[i];

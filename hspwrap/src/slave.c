@@ -194,7 +194,8 @@ slave_main (const char *cmd)
   // Spawn and initialize writer threads
   writers = malloc(noutfiles * sizeof(struct writer_ctx));
   for (i = 0; i < noutfiles; ++i) {
-    writer_start(&writers[i], outfiles[i], BUFFER_SIZE * ps_ctl->nprocesses);
+    writer_start(&writers[i], outfiles[i], BUFFER_SIZE * ps_ctl->nprocesses,
+	         ps_ctl->nprocesses);
   }
 
   // Initial (empty) data
@@ -519,7 +520,7 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
     f = &ft->file[i];
     if (f->wid == wid && !strcmp(f->name, ctx->name)) {
       // Write it out, it is an output file that belongs to us
-      writer_write(ctx, f->shm, f->size);
+      writer_write(ctx, wid, f->shm, f->size);
 
       // Mark buffer as empty
       f->size = 0;
@@ -544,7 +545,7 @@ pull_worker_results (wid_t wid)
         ctx = &writers[j];
         if (!strcmp(f->name, ctx->name)) {
           // Write it out, it is an output file that belongs to us
-          writer_write(ctx, f->shm, f->size);
+          writer_write(ctx, wid, f->shm, f->size);
 
           // Mark buffer as empty
           f->size = 0;

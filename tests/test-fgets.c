@@ -23,6 +23,7 @@ main(int argc, char **argv)
   }
 
   for (i=0; stdiowrap_fgets(c, sizeof(c), inf) != NULL; ++i) {
+    printf("Got string: '%s'\n", c);
     stdiowrap_fputs(c, outf);
 
     nanosleep(&ts, NULL);

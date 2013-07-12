@@ -36,6 +36,7 @@ def build(bld):
         bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
     """
     
+    bld.program(source='src/hspgather.c', target='hspgather', use='ioutils strutils cliutils')
     bld.program(source='src/hspclean.c', target='hspclean')
 
     # MCW-enabled demos
