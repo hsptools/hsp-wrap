@@ -11,7 +11,8 @@ def build(bld):
         'test-fgetc',
         'test-fgets',
         'test-db',
-        'test-kill'
+        'test-kill',
+        'test-fasta',
     ]
 
     for t in tests:
