@@ -129,8 +129,10 @@ main (int argc, char **argv)
 
   ch = getenv("HSP_INPUT_FORMAT");
   if (!ch || ch[0] == '\0' || ch[0] == 'l') {
+    info("Input format: Lines\n");
     input_fmt = 'l';
   } else if (ch[0] == 'f') {
+    info("Input format: FASTA\n");
     input_fmt = 'f';
   } else {
     fputs("Invalid input format specified\n", stderr);

@@ -159,9 +159,11 @@ master_broadcast_file (const char *path)
     chunk_sz  = next_sz;
 
     for (br=0; br<chunk_sz; br+=b) {
-      b = read(fd, &chunk[br], chunk_sz-br);
+      b = read(fd, chunk+br, chunk_sz-br);
       if (b == -1) {
 	fprintf(stderr, "Couldn't read file during broadcast: %s", strerror(errno));
+	free(chunk);
+	close(fd);
 	exit(EXIT_FAILURE);
       }
     }
@@ -177,10 +179,11 @@ master_broadcast_file (const char *path)
     if (rc != MPI_SUCCESS) {
       free(chunk);
       close(fd);
-      return rc;
+      return -1;
     }
   }
   close(fd);
+  free(chunk);
 
   if (rc == MPI_SUCCESS) {
     return sz;
@@ -293,8 +296,9 @@ master_main (int nslaves)
 
   // Update slave states
   in_s = in_data;
+  nrunning = nslaves;
   percent = last_percent = 0;
-  while (seq_idx < in_cnt) {
+  while (seq_idx < in_cnt && nrunning == nslaves) {
     // Limit by max number of sequences
     if (max_nseqs > in_cnt-seq_idx) {
       max_nseqs = in_cnt-seq_idx;
@@ -388,6 +392,13 @@ master_main (int nslaves)
           seq_idx += wu_nseqs;
           break;
 
+	case REQ_ABORT:
+	  // A client is aborting, take down the whole system (for now)
+	  // Do not send -- client is not receiving anymore!
+          fprintf(stderr, "master: Slave %d aborted. Exiting.\n", s->rank);
+	  nrunning--;
+	  break;
+
         default:
           // Unknown request
           fprintf(stderr, "master: unknown request type from rank %d. Exiting.\n",
@@ -408,7 +419,7 @@ master_main (int nslaves)
   info("master: Done issuing jobs\n");
 
   // Tell all slaves to exit (maybe can be done slave-by-slave)
-  for (nrunning=nslaves; nrunning; nrunning--) {
+  for (; nrunning; nrunning--) {
     trace("master: Waiting for %d slaves to exit.\n", nrunning);
 
     MPI_Waitany(nreqs, ctx.mpi_req, &req_idx, MPI_STATUSES_IGNORE);
@@ -430,6 +441,11 @@ master_main (int nslaves)
       MPI_Send(&s->workunit, sizeof(struct workunit), MPI_BYTE, s->rank,
                TAG_WORKUNIT, MPI_COMM_WORLD);
       trace("master: Terminated slave %d.\n", slave_idx);
+      break;
+
+    case REQ_ABORT:
+      // Another slave aborted, no need to do anything
+      fprintf(stderr, "master: Slave %d aborted during shutdown.\n", s->rank);
       break;
 
     default:

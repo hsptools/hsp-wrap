@@ -34,6 +34,7 @@ struct cache_buffer
 
 static int  mkpath (const char *path, mode_t mode);
 static int  request_work (struct cache_buffer **queue);
+static int  request_abort ();
 static void push_work (wid_t wid, const char *data, size_t len);
 static void pull_results (struct writer_ctx *w, wid_t wid);
 static void pull_worker_results (wid_t wid);
@@ -241,14 +242,36 @@ slave_main (const char *cmd)
     pthread_mutex_lock(&ps_ctl->lock);
     if (ps_ctl_all_done(ps_ctl)) {
       // All processes are done! exit loop
+      trace("slave %d: All processes done! exit loop\n", sid);
       pthread_mutex_unlock(&ps_ctl->lock);
+      trace("slave %d: All processes done! come on...\n", sid);
       break;
     }
 
     // Otherwise, wait for a process to need service
     while (ps_ctl_all_running(ps_ctl)) {
+      trace("slave %d: Waiting for customer...\n", sid);
       pthread_cond_wait(&ps_ctl->need_service, &ps_ctl->lock);
     }
+    
+    // Print stupid report
+#ifdef TRACE
+    char *report=malloc(ps_ctl->nprocesses+1);
+    for (wid = 0; wid < ps_ctl->nprocesses; ++wid) {
+      switch (ps_ctl->process_state[wid]) {
+      case EOD:     report[wid] = 'E'; break;
+      case NOSPACE: report[wid] = 'N'; break;
+      case FAILED:  report[wid] = 'F'; break;
+      case DONE:    report[wid] = 'D'; break;
+      case IDLE:    report[wid] = 'I'; break;
+      case RUNNING: report[wid] = 'R'; break;
+      default:      report[wid] = ' '; break;
+      }
+    }
+    report[wid] = '\0';
+    trace("slave %d: worker statuses = [%s]\n", sid, report);
+    free(report);
+#endif // TRACE
 
     // Now, service all processes
     //fprintf(stderr, "slave %d: SERVICING WORKERS\n", sid);
@@ -332,6 +355,13 @@ slave_main (const char *cmd)
     if (!no_work) {
       no_work = (request_work(&queue) == -1);
     }
+  }
+
+  trace("slave %d: Loop is exited.\n", sid);
+
+  // The loop exited, but master didn't tell us to. Post abort "request"
+  if (!no_work) {
+    request_abort();
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -484,6 +514,25 @@ request_work (struct cache_buffer **queue)
 }
 
 
+static int
+request_abort ()
+{
+  struct request  req;
+  int rc;
+
+  req.type  = REQ_ABORT;
+  req.count = 0; // N/A
+
+  // request abort -- really, just letting the master know.
+  trace("slave %d: sending abort notification...\n", sid);
+  rc = MPI_Send(&req, sizeof(struct request), MPI_BYTE, 0,
+           TAG_REQUEST, MPI_COMM_WORLD);
+  trace("slave %d: sent notification %d\n", sid, rc);
+
+  return rc;
+}
+
+
 static void
 push_work (wid_t wid, const char *data, size_t len)
 {
@@ -518,6 +567,8 @@ pull_results (struct writer_ctx *ctx, wid_t wid)
   ft = &ps_ctl->ft;
   for (i = 0; i < ft->nfiles; ++i) {
     f = &ft->file[i];
+    printf("worker %d: Considering writing %d/%d: '%s' vs. '%s' (size %zu)\n",
+           wid, i, ft->nfiles, f->name, ctx->name, f->size);	
     if (f->wid == wid && !strcmp(f->name, ctx->name)) {
       // Write it out, it is an output file that belongs to us
       writer_write(ctx, wid, f->shm, f->size);
@@ -544,12 +595,18 @@ pull_worker_results (wid_t wid)
       for (j = 0; j < noutfiles; ++j) {
         ctx = &writers[j];
         if (!strcmp(f->name, ctx->name)) {
+          trace("worker %d: Writing %d/%d: '%s' vs. '%s' (size %zu)\n",
+                 wid, i, ft->nfiles, f->name, ctx->name, f->size);	
+
           // Write it out, it is an output file that belongs to us
           writer_write(ctx, wid, f->shm, f->size);
 
           // Mark buffer as empty
           f->size = 0;
-        }
+        } else {
+          trace("worker %d: Considering writing %d/%d: '%s' vs. '%s' (size %zu)\n",
+                 wid, i, ft->nfiles, f->name, ctx->name, f->size);	
+	}
       }
     }
   }

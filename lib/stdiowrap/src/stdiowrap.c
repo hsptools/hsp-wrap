@@ -532,8 +532,8 @@ mmap_shm_sysv (key_t key, size_t sz, int *id)
 ////////////////////////////////////////////////////////////////////////////////
 
 
-#define MAP_WF(w,s)      struct WFILE *w = find_WFILE((s)); if (!(w)) { errno = EINVAL; return; }
-#define MAP_WF_E(w,s,e)  struct WFILE *w = find_WFILE((s)); if (!(w)) { errno = EINVAL; return (e); }
+#define MAP_WF(w,s)      struct WFILE *w = find_WFILE((s)); if (!(w)) { fprintf(stderr, "stdiowrap: Failed to map WFILE.\n"); errno = EINVAL; return; }
+#define MAP_WF_E(w,s,e)  struct WFILE *w = find_WFILE((s)); if (!(w)) { fprintf(stderr, "stdiowrap: Failed to map WFILE.\n"); errno = EINVAL; return (e); }
 
 
 extern FILE *
@@ -1211,6 +1211,7 @@ stdiowrap_mmap (void *addr, size_t len, int prot, int flags, int fd, off_t off)
   }
 
   wfd->ref_cnt++;
+
   return wfd->data + off;
 }
 

@@ -3,10 +3,11 @@
 
 #include <stdint.h>
 #include <mpi.h>
+#include "../../hsp-config.h"
 
 // Configuration
-#define NUM_PROCS 12
-#define BUFFER_SIZE (4L<<20)
+//#define NUM_PROCS 12
+//#define BUFFER_SIZE (4L<<20)
 
 // Common utils
 #define MIN(a, b) (((a)<(b))?(a):(b))
@@ -22,11 +23,20 @@
 // Tag for slave messages
 #define TAG_REQUEST 3
 
-//#define trace(...) fprintf(stderr, __VA_ARGS__)
-#define trace(...) 
+//#define TRACE 1
+#define INFO 1
 
+#ifdef TRACE
+#define trace(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define trace(...) 
+#endif
+
+#ifdef INFO
 #define info(...) fprintf(stderr, __VA_ARGS__)
-//#define info(fmt, ...) 
+#else
+#define info(fmt, ...) 
+#endif
 
 typedef uint32_t blockid_t;
 typedef uint16_t blockcnt_t;
@@ -40,6 +50,7 @@ enum workunit_type {
 // Types of requests (from slave to master)
 enum request_type {
   REQ_WORKUNIT,
+  REQ_ABORT
 };
 
 // Work unit message

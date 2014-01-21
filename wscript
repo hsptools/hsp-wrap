@@ -16,10 +16,10 @@ tool_dir = 'waf-tools'
 
 def options(opt):
     default_num_cores = 12
-    default_buffer_size = (1<<27)
+    default_buffer_size = (4<<20)
 
     opt.load('compiler_c compiler_cxx')
-    opt.load('compiler_mpi_c', tooldir=tool_dir)
+    opt.load('compiler_mpi_c man', tooldir=tool_dir)
 
     opt.add_option('--debug', action='store_true',
                    help='Build programs with debugging symbols')
@@ -171,11 +171,13 @@ def configure(conf):
     #### Additional Configuration ####
 
     # Defines
-    conf.define_cond('DEBUG',          conf.options.debug)
-    conf.define('MCW_NCORES',          conf.options.num_cores)
-    conf.define('MCW_RESULTBUFF_SIZE', conf.options.result_buffer_size)
-    conf.define('HSP_VERSION',         VERSION)
+    conf.define_cond('DEBUG',  conf.options.debug)
+    conf.define('NUM_PROCS',   conf.options.num_cores)
+    conf.define('BUFFER_SIZE', conf.options.result_buffer_size)
+    conf.define('HSP_VERSION', VERSION)
     conf.write_config_header('hsp-config.h')
+
+    conf.recurse('3rdparty')
 
     # Summary
     if not mysql_config:
@@ -184,5 +186,5 @@ def configure(conf):
         Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('hspwrap lib tools tests')
+    bld.recurse('hspwrap lib tools tests 3rdparty')
 
