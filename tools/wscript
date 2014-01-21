@@ -6,21 +6,39 @@ from waflib import Logs
 
 def build(bld):
 
-    """
+    # Useful tools
+    bld.program(source='src/hspgather.c', target='hspgather', use='ioutils strutils cliutils')
+    bld.program(source='src/hspclean.c', target='hspclean')
+    bld.program(source='src/hsplsidx.c', target='hsplsidx')
+
     # FASTA tools
     for t in ['fastalens', 'fastadist', 'splitfasta', 'sortfasta']:
         bld.program(source='src/%s.c'%t, target=t)
 
+    bld.program(source='src/samplefasta.c', target='samplefasta', use='cliutils ioutils')
+
+    # MOL2 tools
+    bld.program(source='src/splitmol2.c', target='splitmol2')
+
+    # Special tools
+    bld.program(source='src/mergeblastxml.c', target='mergeblastxml', use='cliutils ioutils')
+
+    if bld.env['HAVE_LIBEXPAT']:
+        bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
+
+    # MCW-enabled demos
+    bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap', lib='rt')
+
+    """
+    # FASTA tools
     bld.program(source='src/compressfasta.c', target='compressfasta',
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_DEFAULT_COMPRESSION')
     bld.program(source='src/compressfasta.c', target='compressfasta0',
             use='cliutils zutils', defines='CF_COMPRESSION_LEVEL=Z_NO_COMPRESSION')
     #bld.program(source='src/nrfasta.c', target='nrfasta', use='GLIB2')
-    bld.program(source='src/samplefasta.c', target='samplefasta', use='cliutils ioutils')
 
     # MOL2 tools
     bld.program(source='src/compressmol2.c', target='compressmol2', use='cliutils zutils')
-    bld.program(source='src/splitmol2.c', target='splitmol2')
 
     # Block-wise recovery
     bld.program(source='src/recover.c', target='recover', use='ioutils cliutils')
@@ -31,14 +49,4 @@ def build(bld):
     bld.program(source='src/zextract.c', target='zextract', use='zutils')
     bld.program(source='src/zsplit.c', target='zsplit', use='ioutils cliutils')
     bld.program(source='src/zstat.c', target='zstat', use='zutils')
-    bld.program(source='src/mergeblastxml.c', target='mergeblastxml', use='cliutils ioutils')
-    if bld.env['HAVE_LIBEXPAT']:
-        bld.program(source='src/xmlparse.c', target='xmlparse', use='EXPAT')
     """
-    
-    bld.program(source='src/hspgather.c', target='hspgather', use='ioutils strutils cliutils')
-    bld.program(source='src/hspclean.c', target='hspclean')
-
-    # MCW-enabled demos
-    bld.program(source='src/mcwcat.c', target='mcwcat', use='stdiowrap', lib='rt')
-
