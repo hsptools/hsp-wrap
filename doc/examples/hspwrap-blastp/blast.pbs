@@ -1,0 +1,35 @@
+#PBS -A UT-NTNL0166
+#PBS -l walltime=02:00:00,size=24
+
+# Get to the right directory, assign name for output
+cd $PBS_O_WORKDIR
+
+export NCBI_DONT_USE_LOCAL_CONFIG=1
+export BLAST_MAXQUERY_SIZE=1
+
+# Shared input
+# Note, there is no "xxx0" naming restriction like in MCW.
+# The HSP_DBFILES are simply in the HSP_DBDIR directory
+# Relative and absolute directories are permitted      
+export HSP_DBDIR="nr5m"
+export HSP_DBFILES="nr5m.phr:nr5m.pin::nr5m.psq"
+
+# Input query file
+export HSP_INFILES="nr-48c.fasta"
+export HSP_INPUT_FORMAT="fasta"
+
+# Output
+export HSP_OUTDIR="hspout-${PBS_JOBNAME}.${PBS_JOBID}"
+export HSP_OUTFILES="results"
+
+# EXEFILE as well as function arguments can be relative or absolute
+export HSP_EXEFILE="blastall"
+export HSP_EXEARGS="blastall -p blastp -d nr5m/nr5m -m 7 -i nr-48c.fasta -o results"
+ulimit -f unlimited -c unlimited -l unlimited -m unlimited
+
+CORES=12
+NODES=$((PBS_NNODES / CORES))
+# Note, that a useless argument (foo) is required at the moment :durr:
+time aprun -n $NODES -N 1 -d $CORES ./hspwrap foo
+# Clean up SHMs
+aprun -n $NODES -N 1 -d $CORES ./hspclean

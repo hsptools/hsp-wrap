@@ -1,0 +1,39 @@
+#!/bin/bash
+#PBS -N example-job
+#PBS -l walltime=0:30:00,size=24
+#PBS -q small
+
+export MCW_JOB_NAME="${PBS_JOBNAME}.${PBS_JOBID}"
+
+# Give 5 minutes to "flush" if wall is hit
+export MCW_S_TIMELIMIT=$((PBS_WALLTIME - 5*60))
+
+# Database Settings (Assuming some DB stored in work directory)
+export MCW_DB_PATH="$PBS_O_WORKDIR"
+export MCW_DB_COUNT=1
+export MCW_DB_PREFIX="Pfam24"
+export MCW_DB_FILES="Pfam24:Pfam24.h3f:Pfam24.h3i:Pfam24.h3m:Pfam24.h3p"
+
+# Input file
+export MCW_Q_FILE="./sequences.cfasta"    # Input query file
+export MCW_Q_FILES=1                      # Number of streams interleaved in MCW_Q_FILE
+export MCW_Q_WUM=1                        # Work-unit-multiplier (just leave at 1)
+
+# Output file(s)
+export MCW_O_FILES="output"
+
+# Command line, make sure to use blastp or blastn as appropriate.
+export MCW_S_EXE="./hmmscan"
+export MCW_S_LINE="--domtblout output $MCW_DB_PATH/${MCW_DB_PREFIX}0/$MCW_DB_PREFIX :IN0:"
+export MCW_S_DUP2=""                      # dup2() interface, unneeded
+
+# Uncomment these if using a massive number of ranks (>10,000)
+#export MPICH_PTL_UNEX_EVENTS=400000
+#export MPICH_PTL_OTHER_EVENTS=100000
+#export MPICH_PTL_MATCH_OFF=1
+
+# Run the dang thing
+CORES=12
+NODES=$((PBS_NNODES / CORES))
+ulimit -c unlimited -f unlimited
+time aprun -n $NODES -N 1 -d $CORES ./mcw
