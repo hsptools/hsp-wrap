@@ -15,7 +15,7 @@ out = 'build'
 tool_dir = 'waf-tools'
 
 def options(opt):
-    default_num_cores = 12
+    default_num_cores = 32
     default_buffer_size = (4<<20)
 
     opt.load('compiler_c compiler_cxx')
@@ -186,5 +186,5 @@ def configure(conf):
         Logs.warn('Expat library could not be found.  XML related tools will not be built.')
 
 def build(bld):
-    bld.recurse('hspwrap lib tools tests 3rdparty')
+    bld.recurse('hspwrap lib tools 3rdparty')
 

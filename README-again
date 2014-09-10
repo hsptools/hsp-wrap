@@ -1,0 +1,101 @@
+                       Running BLAST on Kraken with MCW
+
+Introduction
+============
+
+This document discusses how to use the available MCW GNU modules to run BLAST
+on Kraken.
+
+
+Using the Modules
+=================
+
+You use the provided modulefiles to access the needed tools and databases.
+First, you need to load the ncbi utilities and mcw tools:
+
+$ module load mcw-ncbi
+
+Next, you can choose which database you would like to use.  We highly
+recommend using the provided modules to do so, although you can specify
+additional databases manually.
+
+$ module avail 2>&1 | grep mcw-db
+mcw-db-nr/2011.11.30 mcw-db-nt/2011.11.11 
+
+As you can see, there are two databases available.  Load one:
+
+$ module load mcw-db-nr
+
+
+Creating a Job
+==============
+
+Create a new directory in your lustre scratch space:
+
+$ mkdir /lustre/scratch/$USER/new-job
+$ cd /lustre/scratch/$USER/new-job
+
+Copy the example job, and edit in your favorite editor:
+
+$ cp /sw/xt/mcw/0.1.0/share/doc/blastp-demo/job.pbs
+$ vim job.pbs
+
+You will want to change some values.
+
+NODES must be an integer above 2, it is the total number of nodes on Kraken that
+will be utilized for the run.  MCW reserves one node as the "master" role, and
+you must have at least 1 worker node, therefore the minimum is 2.  Also note,
+the value for NODES must be equal to one-twelvth the "-l size=n" parameter
+given to PBS. So, be sure to change "-l size" as well.
+
+TIMEM is the number of minuntes to run before MCW will terminate itself.  This
+feature is necessary in order to correctly free resources before the job is
+forcefully killed.  This should be equal to the value of the "-l walltime" PBS
+parameter converted to minutes.
+
+CMD_LINE contains the options passed to blastall.  Note, it is extremely
+important that this line is correct.  Ensure you are using the right program
+(blastp, blastn, blastx, ...) for the database module you loaded earlier.  In
+addition, the -d, -i, and -o parameters must use the :DB:, :IN:, and :OUT:
+placeholders respectively.
+
+Q_FILE is the input FASTA file you wish to use.  It must not be compressed.
+
+BLOCK_SIZE is the size, in bytes, to use in distributing input sequences.  A
+future version will calculate a sane value of this automatically based on
+input size, number of nodes, and other factors.  For now, ensure it is
+sufficiently low such that all cores receive work. Yet, try to make it large
+enough that each core only gets a few blocks. 
+
+
+Submitting the Job
+==================
+
+The job should now be ready to run.  Use qsub to submit:
+
+$ qsub job.pbs
+
+And wait for it to complete:
+
+$ qstat -u $USER
+
+
+Gathering the Results
+=====================
+
+The output results of all the queries are distributed and are compressed.  The
+gather tool can coalesce these results into a single text file.  By default MCW
+and the example script create an output directory named "job-<pbs-job-name>".
+On Kraken, the directory will have the form "job-1234567.nid00000".  Run:
+
+$ gather job-1234567.nid00000 > 1234567.out
+
+You should now have a properly formatted output text file.  If not, check
+the error file for clues.
+
+If you are running an NCBI blast job with XML formatted output, the '-m 7'
+option, then you can use the xmlparse tool to parse the file and generate
+a more condensed output.
+
+$ xmlparse 1234567.out > 1234567.parsed
+
