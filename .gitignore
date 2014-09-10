@@ -1,6 +1,32 @@
+<<<<<<< HEAD
 .*.sw?
 *.pyc
 /.waf-*
 /.lock-waf*
 /build
 /target
+=======
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+>>>>>>> a81e184bbf9363dc685a1665bd5939fd25ed74ac
