@@ -21,7 +21,7 @@ This document describes how to build and install the HSP wrap program.
    To clean: ./waf clean distclean
 
 	./waf configure --prefix=$PWD    	
-	* --prefix, project's root directory
+	* --prefix, project root directory
 	* --debug, sets debug compile flags
 
 3. Build HSP wrap (takes ~10 min)
