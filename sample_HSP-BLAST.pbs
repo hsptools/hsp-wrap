@@ -1,0 +1,49 @@
+#!/bin/bash
+#PBS -N hsp-blastall
+#PBS -l walltime=2:00:00
+#PBS -l nodes=2
+#PBS -A UT-AACE-GENOMIC
+
+# Move to current directory (where PBS job was submitted)
+cd $PBS_O_WORKDIR                                      
+
+# Set HSP wrapper paths 
+HSP_BIN="path/to/hspwrap-bundle/bin"
+
+########################
+##### HSP Settings #####
+########################
+
+# Variable set in Paul's example
+export NCBI_DONT_USE_LOCAL_CONFIG=1
+export BLAST_MAXQUERY_SIZE=1
+
+# Database settings
+export HSP_DBDIR="path/to/nr/database"
+export HSP_DBFILES="nr.00.phr:nr.00.pin:nr.00.pnd:nr.00.pni:nr.00.psi:nr.00.psq:nr.pal"
+
+
+# Input (regular FASTA format)
+export HSP_INFILES="path/to/input/fasta/file"
+export HSP_INPUT_FORMAT="fasta"
+
+# Output
+export HSP_OUTDIR="hspout-${PBS_JOBNAME}.${PBS_JOBID}"
+export HSP_OUTFILES="blast.out"
+
+# Command line, make sure to use blastp or blastn as appropriate.
+export HSP_EXEFILE="$HSP_BIN/blastall"
+export HSP_EXEARGS="$HSP_EXEFILE -p blastp -d $HSP_DBDIR/nr -i $HSP_INFILES -o $HSP_OUTFILES -m 8"
+
+########################
+#####   Run job    #####
+########################
+
+# Note: a useless argument (foo) is required at the moment
+ulimit -c unlimited -f unlimited
+time mpirun -n 2 $HSP_BIN/hspwrap foo > /dev/null
+
+# Clean up shared memories
+time mpirun -n 2 $HSP_BIN/hspclean > /dev/null
+
+

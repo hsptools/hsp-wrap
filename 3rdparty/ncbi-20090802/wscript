@@ -1,0 +1,60 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+import Task
+
+def build(bld):
+  if bld.env['CC_NAME'] == 'icc':
+    vars = 'LINUX_MODE=icc '
+  else:
+    vars = ''
+
+  def make_all(tsk):
+    d = tsk.generator.path.abspath()
+    ret = tsk.generator.bld.exec_command(vars + './ncbi/make/makedis.csh', cwd=d)
+
+  def redir(n):
+    try:
+      shutil.rmtree(n.abspath())
+    except(OSError):
+      pass
+    n.mkdir()
+
+  ncbidir = bld.path.find_node('ncbi')
+  mandir  = bld.path.find_node('ncbi/doc/man')
+  blddir  = bld.path.make_node('ncbi/build')
+  bindir  = bld.path.make_node('ncbi/bin')
+
+  if bld.cmd == 'clean':
+    redir(blddir)
+    redir(bindir)
+  else:
+    bld(rule=make_all, always=False, name='Build NCBI', after='cstlib')
+
+  env_ncbi = bld.env.derive()
+  env_ncbi.PREFIX = os.path.abspath(os.path.join(env_ncbi.PREFIX, 'opt/ncbi'))
+
+  exe = ['asn2ff', 'asn2gb', 'asn2idx', 'asn2xml', 'asndhuff', 'asntool',
+      'bl2seq', 'blastall', 'blastcl3', 'blastclust', 'blastpgp', 'cdscan',
+      'checksub', 'copymat', 'debruijn', 'errhdr', 'fa2htgs', 'fastacmd',
+      'findspl', 'formatdb', 'formatrpsdb', 'gene2xml', 'getpub', 'gil2bin',
+      'idfetch', 'impala', 'indexpub', 'makemat', 'makeset', 'megablast',
+      'rpsblast', 'seedtop', 'sortbyquote', 'subfuse', 'taxblast', 'tbl2asn',
+      'vecscreen']
+
+  man = ['asn2ff.1', 'asn2gb.1', 'asn2idx.1', 'asn2xml.1', 'asndhuff.1',
+      'asntool.1', 'bl2seq.1', 'blast.1', 'blastall.1', 'blastcl3.1',
+      'blastclust.1', 'blastpgp.1', 'cdscan.1', 'checksub.1', 'copymat.1',
+      'debruijn.1', 'errhdr.1', 'fa2htgs.1', 'fastacmd.1', 'findspl.1',
+      'formatdb.1', 'formatrpsdb.1', 'gene2xml.1', 'getpub.1', 'gil2bin.1',
+      'idfetch.1', 'impala.1', 'indexpub.1', 'makemat.1', 'makeset.1',
+      'megablast.1', 'rpsblast.1', 'seedtop.1', 'sortbyquote.1', 'subfuse.1',
+      'taxblast.1', 'tbl2asn.1', 'vecscreen.1']
+
+  bld.install_files('${PREFIX}/bin', exe,
+    cwd=blddir, relative_trick=True, env=env_ncbi, chmod=755)
+
+  for m in man:
+    src = os.path.join('ncbi/doc/man', m)
+    bld(features='man', env=env_ncbi, cwd=mandir, source=src)

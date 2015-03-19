@@ -1,0 +1,1556 @@
+Macro-action-list ::= {
+  edit-location {
+    type cds ,
+    action
+      extend-3 NULL ,
+    retranslate-cds FALSE ,
+    constraint {
+      location {
+        strand any ,
+        seq-type any ,
+        partial5 either ,
+        partial3 partial ,
+        location-type any ,
+        end3
+          max-dist-from-end 2 } ,
+      sequence {
+        seqtype
+          rna mRNA ,
+        feature any } } } ,
+  edit-location {
+    type cds ,
+    action
+      extend-5 NULL ,
+    retranslate-cds FALSE ,
+    constraint {
+      location {
+        strand any ,
+        seq-type any ,
+        partial5 partial ,
+        partial3 either ,
+        location-type any ,
+        end5
+          max-dist-from-end 2 } ,
+      sequence {
+        seqtype
+          rna mRNA ,
+        feature any } } } ,
+  edit-location {
+    type cds ,
+    action
+      extend-3 NULL ,
+    retranslate-cds FALSE ,
+    constraint {
+      location {
+        strand any ,
+        seq-type any ,
+        partial5 either ,
+        partial3 partial ,
+        location-type any ,
+        end3
+          max-dist-from-end 2 } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Bacteria" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  edit-location {
+    type cds ,
+    action
+      extend-5 NULL ,
+    retranslate-cds FALSE ,
+    constraint {
+      location {
+        strand any ,
+        seq-type any ,
+        partial5 partial ,
+        partial3 either ,
+        location-type any ,
+        end5
+          max-dist-from-end 2 } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Bacteria" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            location proviral ,
+        value "TRUE" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual taxname ,
+        constraint {
+          match-text "HIV" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      sequence {
+        seqtype
+          dna NULL ,
+        feature any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Retroviridae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      apply {
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual codon-start } ,
+        value "match" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual translation } ,
+        string-constraint {
+          match-text "*" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } } } } ,
+  synchronize-cds-partials NULL ,
+  adjust-for-consensus-splice NULL ,
+  trim-stop-from-complete-cds NULL ,
+  trim-junk-from-primer-seq NULL ,
+  remove-seg-gaps NULL ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            textqual nat-host ,
+        value "Homo sapiens" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual taxname ,
+        constraint {
+          match-text "HIV" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            textqual nat-host ,
+        value "Homo sapiens" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual taxname ,
+        constraint {
+          match-text "Human immunodeficiency virus" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  convert-feature {
+    type-from gene ,
+    type-to rRNA ,
+    leave-original FALSE ,
+    src-feat-constraint {
+      sequence {
+        seqtype
+          nucleotide NULL ,
+        feature gene ,
+        num-features
+          equals 1 } ,
+      string {
+        match-text "16S rRNA" ,
+        match-location contains ,
+        case-sensitive TRUE ,
+        whole-word FALSE ,
+        not-present FALSE } } } ,
+  convert-feature {
+    type-from gene ,
+    type-to rRNA ,
+    leave-original FALSE ,
+    src-feat-constraint {
+      sequence {
+        seqtype
+          nucleotide NULL ,
+        feature gene ,
+        num-features
+          equals 1 } ,
+      string {
+        match-text "16S ribosomal RNA" ,
+        match-location contains ,
+        case-sensitive TRUE ,
+        whole-word FALSE ,
+        not-present FALSE } } } ,
+  fix-pub-caps {
+    title TRUE ,
+    authors FALSE ,
+    affiliation FALSE ,
+    affil-country FALSE ,
+    constraint {
+      pub {
+        type any ,
+        special-field {
+          field title ,
+          constraint
+            is-all-caps NULL } } } } ,
+  fix-pub-caps {
+    title FALSE ,
+    authors TRUE ,
+    affiliation FALSE ,
+    affil-country FALSE ,
+    constraint {
+      pub {
+        type any ,
+        special-field {
+          field authors ,
+          constraint
+            is-all-caps NULL } } } } ,
+  fix-pub-caps {
+    title FALSE ,
+    authors TRUE ,
+    affiliation FALSE ,
+    affil-country FALSE ,
+    constraint {
+      pub {
+        type any ,
+        special-field {
+          field authors ,
+          constraint
+            is-all-lower NULL } } } } ,
+  fix-pub-caps {
+    title FALSE ,
+    authors FALSE ,
+    affiliation FALSE ,
+    affil-country TRUE } ,
+  aecr {
+    action
+      apply {
+        field
+          feature-field {
+            type repeat-region ,
+            field
+              legal-qual rpt-type } ,
+        value "tandem" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type misc-feature ,
+            field
+              legal-qual satellite-type } ,
+        string-constraint {
+          match-text "microsatellite" ,
+          match-location equals ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            textqual nat-host ,
+        value "Homo sapiens" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual nat-host ,
+        constraint {
+          match-text "human" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            location mitochondrion ,
+        value "TRUE" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type d-loop ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "control region" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            location mitochondrion ,
+        value "TRUE" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type misc-feature ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "control region" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt " " ,
+          location beginning ,
+          case-insensitive FALSE } ,
+        field
+          pub title } ,
+    also-change-mrna FALSE } ,
+  remove-descriptor {
+    type publication ,
+    constraint {
+      pub {
+        type unpublished ,
+        special-field {
+          field title ,
+          constraint
+            is-not-present NULL } } } } ,
+  remove-descriptor {
+    type publication ,
+    constraint {
+      pub {
+        type unpublished ,
+        field {
+          field title ,
+          constraint {
+            match-text "unpublished" ,
+            match-location equals ,
+            case-sensitive FALSE ,
+            whole-word FALSE ,
+            not-present FALSE } } } } } ,
+  remove-descriptor {
+    type publication ,
+    constraint {
+      pub {
+        type unpublished ,
+        field {
+          field title ,
+          constraint {
+            match-text "direct submission" ,
+            match-location equals ,
+            case-sensitive FALSE ,
+            whole-word FALSE ,
+            not-present FALSE } } } } } ,
+  apply-molinfo-block {
+    to-list {
+      molecule genomic ,
+      mol-class dna ,
+      strand double } ,
+    from-list {
+      molecule rRNA ,
+      mol-class rna } ,
+    constraint {
+      field {
+        field
+          rna-field {
+            type
+              rRNA NULL ,
+            field product } ,
+        string-constraint {
+          match-text "16S ribosomal RNA" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } } ,
+      sequence {
+        seqtype
+          nucleotide NULL ,
+        feature any ,
+        num-features
+          equals 1 } } } ,
+  fix-caps
+    src-country NULL ,
+  aecr {
+    action
+      convert {
+        fields
+          feature-field {
+            type any ,
+            field-from
+              legal-qual standard-name ,
+            field-to
+              legal-qual note } ,
+        strip-name FALSE ,
+        keep-original FALSE ,
+        capitalization none ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE } ,
+  fix-format
+    collection-date NULL ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            location nucleomorph } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Chlorarachniophyceae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Cryptophyta" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual orgmod-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual orgmod-note ,
+        constraint {
+          match-text "Organelle: nucleomorph" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Chlorarachniophyceae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Cryptophyta" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual orgmod-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual orgmod-note ,
+        constraint {
+          match-text "nucleomorph" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Chlorarachniophyceae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Cryptophyta" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual subsource-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual subsource-note ,
+        constraint {
+          match-text "Organelle: nucleomorph" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Chlorarachniophyceae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Cryptophyta" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual subsource-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual subsource-note ,
+        constraint {
+          match-text "nucleomorph" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Chlorarachniophyceae" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Cryptophyta" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            location macronuclear } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Ciliophora" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual orgmod-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual orgmod-note ,
+        constraint {
+          match-text "Organelle: macronuclear" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Ciliophora" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual orgmod-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual orgmod-note ,
+        constraint {
+          match-text "macronuclear" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Ciliophora" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual subsource-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual subsource-note ,
+        constraint {
+          match-text "Organelle: macronuclear" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Ciliophora" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual subsource-note } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual subsource-note ,
+        constraint {
+          match-text "macronuclear" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual dbxref ,
+        constraint {
+          match-text "taxon:" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Ciliophora" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  fix-spell NULL ,
+  fix-format
+    lat-lon NULL ,
+  aecr {
+    action
+      apply {
+        field
+          feature-field {
+            type repeat-region ,
+            field
+              legal-qual rpt-type } ,
+        value "tandem" ,
+        existing-text append-semi } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type repeat-region ,
+            field
+              legal-qual satellite-type } ,
+        string-constraint {
+          match-text "microsatellite" ,
+          match-location equals ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } } ,
+      field {
+        field
+          feature-field {
+            type repeat-region ,
+            field
+              legal-qual rpt-type } ,
+        string-constraint {
+          match-text "tandem" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "[intronless gene]" ,
+          location anywhere ,
+          case-insensitive FALSE } ,
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Bacteria" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "[intronless gene]" ,
+          location anywhere ,
+          case-insensitive FALSE } ,
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Viruses" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "[intronless gene]" ,
+          location anywhere ,
+          case-insensitive FALSE } ,
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Archaea" ,
+          match-location starts ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "[intronless gene]" ,
+          location anywhere ,
+          case-insensitive FALSE } ,
+        field
+          feature-field {
+            type cds ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      sequence {
+        seqtype
+          rna mRNA ,
+        feature any } } } ,
+  remove-duplicate-features {
+    type gene ,
+    ignore-partials FALSE ,
+    case-sensitive TRUE ,
+    remove-proteins FALSE } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual germline } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual division ,
+        type-constraint any } ,
+      source {
+        field1
+          textqual lineage ,
+        constraint {
+          match-text "Craniata" ,
+          match-location contains ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      remove {
+        field
+          source-qual
+            textqual metagenomic } ,
+    also-change-mrna FALSE } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "5' UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "5UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n5UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "5'UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "3' UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "3UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      remove {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } } ,
+    also-change-mrna FALSE ,
+    constraint {
+      field {
+        field
+          feature-field {
+            type n3UTR ,
+            field
+              legal-qual note } ,
+        string-constraint {
+          match-text "3'UTR" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } } } } ,
+  aecr {
+    action
+      parse {
+        portion {
+          left-marker
+            free-text "ATCC" ,
+          include-left TRUE ,
+          include-right FALSE ,
+          inside TRUE ,
+          case-sensitive TRUE ,
+          whole-word FALSE } ,
+        fields
+          source-qual {
+            field-from strain ,
+            field-to culture-collection } ,
+        remove-from-parsed FALSE ,
+        remove-left FALSE ,
+        remove-right FALSE ,
+        transform {
+          edit {
+            find-txt "ATCC" ,
+            repl-txt "ATCC:" ,
+            location beginning ,
+            case-insensitive FALSE } ,
+          remove {
+            include-left FALSE ,
+            right-marker
+              free-text ";" ,
+            include-right TRUE ,
+            inside FALSE ,
+            case-sensitive TRUE ,
+            whole-word FALSE } } ,
+        existing-text append-semi } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual culture-collection-INST ,
+        constraint {
+          match-text "ATCC" ,
+          match-location equals ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      parse {
+        portion {
+          left-marker
+            free-text "ATCC" ,
+          include-left TRUE ,
+          include-right FALSE ,
+          inside TRUE ,
+          case-sensitive TRUE ,
+          whole-word FALSE } ,
+        fields
+          source-qual {
+            field-from cell-line ,
+            field-to culture-collection } ,
+        remove-from-parsed FALSE ,
+        remove-left FALSE ,
+        remove-right FALSE ,
+        transform {
+          edit {
+            find-txt "ATCC" ,
+            repl-txt "ATCC:" ,
+            location beginning ,
+            case-insensitive FALSE } ,
+          remove {
+            include-left FALSE ,
+            right-marker
+              free-text ";" ,
+            include-right TRUE ,
+            inside FALSE ,
+            case-sensitive TRUE ,
+            whole-word FALSE } } ,
+        existing-text append-semi } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual culture-collection-INST ,
+        constraint {
+          match-text "ATCC" ,
+          match-location equals ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      parse {
+        portion {
+          left-marker
+            free-text "ATCC" ,
+          include-left TRUE ,
+          include-right FALSE ,
+          inside TRUE ,
+          case-sensitive TRUE ,
+          whole-word FALSE } ,
+        fields
+          source-qual {
+            field-from tissue-type ,
+            field-to culture-collection } ,
+        remove-from-parsed FALSE ,
+        remove-left FALSE ,
+        remove-right FALSE ,
+        transform {
+          edit {
+            find-txt "ATCC" ,
+            repl-txt "ATCC:" ,
+            location beginning ,
+            case-insensitive FALSE } ,
+          remove {
+            include-left FALSE ,
+            right-marker
+              free-text ";" ,
+            include-right TRUE ,
+            inside FALSE ,
+            case-sensitive TRUE ,
+            whole-word FALSE } } ,
+        existing-text append-semi } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual culture-collection-INST ,
+        constraint {
+          match-text "ATCC" ,
+          match-location equals ,
+          case-sensitive TRUE ,
+          whole-word FALSE ,
+          not-present TRUE } ,
+        type-constraint any } } } ,
+  fix-format
+    primers NULL ,
+  fix-usa-and-states NULL ,
+  remove-lineage-notes NULL ,
+  aecr {
+    action
+      apply {
+        field
+          source-qual
+            textqual nat-host ,
+        value "Homo sapiens" ,
+        existing-text replace-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      source {
+        field1
+          textqual nat-host ,
+        constraint {
+          match-text "homo sapiens" ,
+          match-location equals ,
+          case-sensitive FALSE ,
+          whole-word FALSE ,
+          not-present FALSE } ,
+        type-constraint any } } } ,
+  aecr {
+    action
+      convert {
+        fields
+          source-qual {
+            field-from clone ,
+            field-to isolate } ,
+        strip-name TRUE ,
+        keep-original FALSE ,
+        capitalization none ,
+        existing-text leave-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      string {
+        match-text "DGGE" ,
+        match-location starts ,
+        case-sensitive FALSE ,
+        whole-word FALSE ,
+        not-present FALSE } } } ,
+  aecr {
+    action
+      convert {
+        fields
+          source-qual {
+            field-from clone ,
+            field-to isolate } ,
+        strip-name FALSE ,
+        keep-original FALSE ,
+        capitalization none ,
+        existing-text leave-old } ,
+    also-change-mrna FALSE ,
+    constraint {
+      string {
+        match-text "TGGE" ,
+        match-location starts ,
+        case-sensitive FALSE ,
+        whole-word FALSE ,
+        not-present FALSE } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "dgge gel band" ,
+          repl-txt "DGGE gel band" ,
+          location anywhere ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "tgge gel band" ,
+          repl-txt "TGGE gel band" ,
+          location anywhere ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "DGGE band" ,
+          repl-txt "DGGE gel band" ,
+          location anywhere ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "TGGE band" ,
+          repl-txt "TGGE gel band" ,
+          location anywhere ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "DGGE" ,
+          repl-txt "DGGE gel band" ,
+          location beginning ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE ,
+    constraint {
+      string {
+        match-text "gel band" ,
+        match-location contains ,
+        case-sensitive FALSE ,
+        whole-word FALSE ,
+        not-present TRUE } } } ,
+  aecr {
+    action
+      edit {
+        edit {
+          find-txt "TGGE" ,
+          repl-txt "TGGE gel band" ,
+          location beginning ,
+          case-insensitive TRUE } ,
+        field
+          source-qual
+            textqual isolate } ,
+    also-change-mrna FALSE ,
+    constraint {
+      string {
+        match-text "gel band" ,
+        match-location contains ,
+        case-sensitive FALSE ,
+        whole-word FALSE ,
+        not-present TRUE } } } ,
+  fix-caps
+    mouse-strain NULL }

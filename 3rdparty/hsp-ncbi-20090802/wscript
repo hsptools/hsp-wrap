@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+import os
+import shutil
+import re
+import Task
+
+def build(bld):
+  if bld.env['CC_NAME'] == 'icc':
+    vars = 'HSP_TOP=%s LINUX_MODE=icc ' % bld.top_dir
+  else:
+    vars = 'HSP_TOP=%s ' % bld.top_dir
+
+  def make_all(tsk):
+    d = tsk.generator.path.abspath()
+    ret = tsk.generator.bld.exec_command(vars + './ncbi/make/makedis.csh', cwd=d)
+
+  def redir(n):
+    try:
+      shutil.rmtree(n.abspath())
+    except(OSError):
+      pass
+    n.mkdir()
+
+  blddir  = bld.path.make_node('ncbi/build')
+  bindir  = bld.path.make_node('ncbi/bin')
+
+  if bld.cmd == 'clean':
+    redir(blddir)
+    redir(bindir)
+  else:
+    bld(rule=make_all, always=False, name='Build HSP-NCBI', after='cstlib')
+
+  exe = ['asn2ff', 'asn2gb', 'asn2idx', 'asn2xml', 'asndhuff', 'asntool',
+      'bl2seq', 'blastall', 'blastcl3', 'blastclust', 'blastpgp', 'cdscan',
+      'checksub', 'copymat', 'debruijn', 'errhdr', 'fa2htgs', 'fastacmd',
+      'findspl', 'formatdb', 'formatrpsdb', 'gene2xml', 'getpub', 'gil2bin',
+      'idfetch', 'impala', 'indexpub', 'makemat', 'makeset', 'megablast',
+      'rpsblast', 'seedtop', 'sortbyquote', 'subfuse', 'taxblast', 'tbl2asn',
+      'vecscreen']
+
+  bld.install_files('${PREFIX}/lib/hsp/ncbi', exe,
+    cwd=blddir, relative_trick=True, chmod=0755)
