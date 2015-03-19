@@ -44,3 +44,5 @@ This document describes how to build and install the HSP wrap program.
     * build/hspwrap/hspwrap - The HSP wrapper
     * build/tools/hspclean - A tool needed to cleanup after the job
     * build/tools/hspgather - HSP wrap version of the 'gather' tool
+
+6. To use HSP-Wrap for NCBI BLAST copy and modify the "sample_HSP-BLAST.pbs" sample script. Note that HSP-Wrap configurations are set via environment variables.
